@@ -7,6 +7,12 @@
 
 import SwiftUI
 import SwiftData
+import PhotosUI
+
+fileprivate struct ArtItem: Identifiable {
+    let id: String
+    let image: UIImage
+}
 
 struct ChapterListView: View {
 
@@ -29,6 +35,14 @@ struct ChapterListView: View {
     @State private var seriesNoteInput = ""
     @State private var showInfoBox = false
     @State private var showLinkActions = false
+    @State private var artImages: [ArtItem] = []
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var artViewerItem: ArtViewerItem?
+
+    private struct ArtViewerItem: Identifiable {
+        let id = UUID()
+        let index: Int
+    }
 
     var body: some View {
         ScrollView {
@@ -66,6 +80,7 @@ struct ChapterListView: View {
         .task {
             await syncChapters()
             await loadCoverImage()
+            await loadArtImages()
         }
         .sheet(isPresented: $showAddBookmark) {
             addBookmarkSheet
@@ -78,6 +93,32 @@ struct ChapterListView: View {
         }
         .sheet(isPresented: $showLinkActions) {
             linkActionsSheet
+        }
+        .fullScreenCover(item: $artViewerItem, onDismiss: {
+            Task { await loadArtImages() }
+        }) { item in
+            ArtViewerOverlay(
+                artImages: artImages,
+                initialIndex: item.index,
+                onDeleteFile: { filename in
+                    await deleteArtFile(filename: filename)
+                },
+                onSetCover: { image in
+                    await setImageAsCover(image)
+                }
+            )
+        }
+        .onChange(of: selectedPhotoItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
+            Task {
+                for item in newItems {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await saveArtImage(data)
+                    }
+                }
+                await loadArtImages()
+                selectedPhotoItems = []
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -334,6 +375,14 @@ struct ChapterListView: View {
                     }
                     Spacer()
                 }
+            }
+
+            if book.isSeries {
+                Rectangle()
+                    .fill(Color.white.opacity(0.04))
+                    .frame(height: 1)
+
+                artAlbumSection
             }
         }
         .padding(16)
@@ -686,6 +735,166 @@ struct ChapterListView: View {
         }
     }
 
+    // MARK: - Art Album
+
+    private var artAlbumSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.green)
+                    .frame(width: 28)
+
+                if artImages.isEmpty {
+                    Text("Add art")
+                        .font(.subheadline)
+                        .foregroundColor(.tertiaryText)
+                } else {
+                    Text("Art")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+
+                    Text("\(artImages.count)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(.tertiaryText)
+                }
+
+                Spacer()
+
+                PhotosPicker(selection: $selectedPhotoItems, matching: .images) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(theme.accent)
+                }
+            }
+
+            if !artImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(artImages.enumerated()), id: \.element.id) { index, art in
+                            Button {
+                                artViewerItem = ArtViewerItem(index: index)
+                            } label: {
+                                Image(uiImage: art.image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Art Helpers
+
+    private func loadArtImages() async {
+        guard book.isSeries, let folderName = book.folderName else { return }
+        let bookmarkKey = book.isSecret ? "secretFolderBookmark" : "rootFolderBookmark"
+        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
+              rootURL.startAccessingSecurityScopedResource() else { return }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
+        guard FileManager.default.fileExists(atPath: artFolder.path) else {
+            artImages = []
+            return
+        }
+
+        let contents = (try? FileManager.default.contentsOfDirectory(at: artFolder, includingPropertiesForKeys: nil)) ?? []
+        let imageExts: Set<String> = ["jpg", "jpeg", "png", "heic", "webp", "gif"]
+        let imageFiles = contents
+            .filter { imageExts.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+        var loaded: [ArtItem] = []
+        for file in imageFiles {
+            if let data = try? Data(contentsOf: file),
+               let image = UIImage(data: data) {
+                loaded.append(ArtItem(id: file.lastPathComponent, image: image))
+            }
+        }
+        artImages = loaded
+    }
+
+    private func saveArtImage(_ data: Data) async {
+        guard book.isSeries, let folderName = book.folderName else { return }
+
+        let bookmarkKey = book.isSecret ? "secretFolderBookmark" : "rootFolderBookmark"
+        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
+              rootURL.startAccessingSecurityScopedResource() else { return }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
+
+        if !FileManager.default.fileExists(atPath: artFolder.path) {
+            try? FileManager.default.createDirectory(at: artFolder, withIntermediateDirectories: true)
+        }
+
+        let ext = imageFileExtension(from: data)
+        let filename = "art_\(Int(Date().timeIntervalSince1970 * 1000)).\(ext)"
+        let fileURL = artFolder.appendingPathComponent(filename)
+        try? data.write(to: fileURL)
+    }
+
+    private func deleteArtFile(filename: String) async {
+        guard book.isSeries, let folderName = book.folderName else { return }
+        let bookmarkKey = book.isSecret ? "secretFolderBookmark" : "rootFolderBookmark"
+        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
+              rootURL.startAccessingSecurityScopedResource() else { return }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
+        let fileURL = artFolder.appendingPathComponent(filename)
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func setImageAsCover(_ image: UIImage) async {
+        guard let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
+
+        let identifier = book.folderName ?? book.filename
+        let filename = ImportService().customCoverName(for: identifier)
+        let thumbnailDir = LocalFileService.shared.thumbnailsDirectory
+        let fileURL = thumbnailDir.appendingPathComponent(filename)
+
+        if let oldPath = book.thumbnailPath {
+            let oldURL = thumbnailDir.appendingPathComponent(oldPath)
+            try? FileManager.default.removeItem(at: oldURL)
+            ThumbnailService.shared.evictCachedImage(for: oldURL)
+        }
+
+        do {
+            try jpegData.write(to: fileURL)
+            ThumbnailService.shared.evictCachedImage(for: fileURL)
+            book.thumbnailPath = filename
+            book.hasManualCover = true
+            book.coverVersion += 1
+            try modelContext.save()
+
+            coverImage = image
+            if let color = image.dominantColor() {
+                dominantColor = Color(color)
+            }
+        } catch {}
+    }
+
+    private func imageFileExtension(from data: Data) -> String {
+        guard data.count >= 12 else { return "jpg" }
+        let bytes = [UInt8](data.prefix(12))
+        if bytes[0] == 0x89 && bytes[1] == 0x50 { return "png" }
+        if bytes[0] == 0xFF && bytes[1] == 0xD8 { return "jpg" }
+        if bytes[0] == 0x47 && bytes[1] == 0x49 { return "gif" }
+        if bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 { return "webp" }
+        if bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70 { return "heic" }
+        return "jpg"
+    }
+
     private func chapterRow(chapter: Chapter, index: Int) -> some View {
         let isCurrentChapter = index == book.currentChapterIndex && book.readingProgress > 0
         let userBookmark = bookmarkFor(index: index)
@@ -738,6 +947,219 @@ struct ChapterListView: View {
 
     private func bookmarkFor(index: Int) -> Bookmark? {
         book.sortedBookmarks.first { $0.chapterIndex == index }
+    }
+}
+
+// MARK: - Art Viewer Overlay
+
+fileprivate struct ArtViewerOverlay: View {
+    @State private var artImages: [ArtItem]
+    @State private var currentIndex: Int
+    @State private var controlsVisible = true
+    @State private var dragOffset: CGFloat = 0
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(ThemeManager.self) private var theme
+
+    let onDeleteFile: (String) async -> Void
+    let onSetCover: (UIImage) async -> Void
+
+    init(artImages: [ArtItem], initialIndex: Int,
+         onDeleteFile: @escaping (String) async -> Void,
+         onSetCover: @escaping (UIImage) async -> Void) {
+        _artImages = State(initialValue: artImages)
+        _currentIndex = State(initialValue: min(initialIndex, max(artImages.count - 1, 0)))
+        self.onDeleteFile = onDeleteFile
+        self.onSetCover = onSetCover
+    }
+
+    var body: some View {
+        let dragProgress = min(abs(dragOffset) / 300, 1.0)
+
+        ZStack {
+            Color.black.opacity(1 - dragProgress * 0.5)
+                .ignoresSafeArea()
+
+            if !artImages.isEmpty {
+                Image(uiImage: artImages[currentIndex].image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+                    .offset(y: dragOffset)
+                    .scaleEffect(1 - dragProgress * 0.15)
+                    .gesture(
+                        DragGesture(minimumDistance: 20)
+                            .onChanged { value in
+                                if abs(value.translation.height) > abs(value.translation.width) {
+                                    dragOffset = value.translation.height
+                                    if controlsVisible && abs(dragOffset) > 10 {
+                                        withAnimation(.easeOut(duration: 0.15)) {
+                                            controlsVisible = false
+                                        }
+                                    }
+                                }
+                            }
+                            .onEnded { value in
+                                if abs(value.translation.height) > abs(value.translation.width) {
+                                    if abs(dragOffset) > 120 {
+                                        dismiss()
+                                    } else if dragOffset != 0 {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                            dragOffset = 0
+                                        }
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            controlsVisible = true
+                                        }
+                                    }
+                                } else {
+                                    if value.translation.width < -50 && currentIndex < artImages.count - 1 {
+                                        withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
+                                    } else if value.translation.width > 50 && currentIndex > 0 {
+                                        withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
+                                    }
+                                }
+                            }
+                    )
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            controlsVisible.toggle()
+                        }
+                    }
+            }
+
+            if controlsVisible {
+                VStack(spacing: 0) {
+                    HStack {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 32, height: 32)
+                                .background(.white.opacity(0.12), in: Circle())
+                        }
+
+                        Spacer()
+
+                        if !artImages.isEmpty {
+                            Text("\(min(currentIndex + 1, artImages.count)) of \(artImages.count)")
+                                .font(.callout)
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+
+                        Spacer()
+
+                        Color.clear.frame(width: 32, height: 32)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                    Spacer()
+
+                    if artImages.count > 1 {
+                        thumbnailStrip
+                    }
+
+                    toolbar
+                }
+                .transition(.opacity)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .statusBarHidden(!controlsVisible)
+    }
+
+    private var thumbnailStrip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 3) {
+                    ForEach(Array(artImages.enumerated()), id: \.element.id) { index, art in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                currentIndex = index
+                            }
+                        } label: {
+                            Image(uiImage: art.image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 44, height: 44)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .opacity(currentIndex == index ? 1.0 : 0.35)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .strokeBorder(.white, lineWidth: currentIndex == index ? 1.5 : 0)
+                                )
+                        }
+                        .id(index)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .onAppear {
+                proxy.scrollTo(currentIndex, anchor: .center)
+            }
+            .onChange(of: currentIndex) { _, newIndex in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(newIndex, anchor: .center)
+                }
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private var toolbar: some View {
+        HStack {
+            Menu {
+                Button {
+                    Task { await setCover() }
+                } label: {
+                    Label("Use as Cover Image", systemImage: "book.closed")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 20))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+            }
+
+            Spacer()
+
+            Button(role: .destructive) {
+                Task { await deleteArt() }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 20))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private func deleteArt() async {
+        let index = currentIndex
+        guard index >= 0, index < artImages.count else { return }
+        let item = artImages[index]
+        await onDeleteFile(item.id)
+        let _ = withAnimation {
+            artImages.remove(at: index)
+        }
+        if currentIndex >= artImages.count {
+            currentIndex = max(0, artImages.count - 1)
+        }
+        if artImages.isEmpty {
+            dismiss()
+        }
+    }
+
+    private func setCover() async {
+        let index = currentIndex
+        guard index >= 0, index < artImages.count else { return }
+        await onSetCover(artImages[index].image)
     }
 }
 
