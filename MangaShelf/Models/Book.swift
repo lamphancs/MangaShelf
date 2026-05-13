@@ -131,6 +131,11 @@ final class Book {
         (bookmarks ?? []).sorted { $0.chapterIndex < $1.chapterIndex }
     }
 
+    /// The UserDefaults key for this book's root folder bookmark
+    var bookmarkKey: String {
+        isSecret ? StorageKey.secretFolderBookmark : StorageKey.rootFolderBookmark
+    }
+
     /// Get the actual thumbnail URL (dynamically constructed)
     var thumbnailURL: URL? {
         guard let thumbnailPath = thumbnailPath else { return nil }

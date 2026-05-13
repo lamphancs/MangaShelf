@@ -32,7 +32,7 @@ extension Chapter {
 // MARK: - UIImage Dominant Color
 
 extension UIImage {
-    func dominantColor() -> UIColor? {
+    nonisolated func dominantColor() -> UIColor? {
         guard let cgImage = cgImage else { return nil }
 
         let size = 50

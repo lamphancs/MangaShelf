@@ -51,7 +51,7 @@ final class ReaderViewModel {
         self.book = book
 
         var resolvedRoot: URL?
-        let bookmarkKey = book.isSecret ? "secretFolderBookmark" : "rootFolderBookmark"
+        let bookmarkKey = book.bookmarkKey
         if let data = UserDefaults.standard.data(forKey: bookmarkKey),
            let (url, _) = try? LocalFileService.shared.resolveBookmark(data) {
             if url.startAccessingSecurityScopedResource() {

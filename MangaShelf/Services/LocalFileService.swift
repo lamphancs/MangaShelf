@@ -28,8 +28,7 @@ final class LocalFileService: FileSourceProtocol {
 
     /// Migrate thumbnails from old Caches location to Application Support
     func migrateThumbnailsIfNeeded() {
-        let migrationKey = "thumbnailsMigratedToAppSupport"
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        guard !UserDefaults.standard.bool(forKey: StorageKey.thumbnailsMigrated) else { return }
 
         let cacheDir = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let oldDir = cacheDir.appendingPathComponent("Thumbnails", isDirectory: true)
@@ -37,7 +36,7 @@ final class LocalFileService: FileSourceProtocol {
         guard fileManager.fileExists(atPath: oldDir.path),
               let files = try? fileManager.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil),
               !files.isEmpty else {
-            UserDefaults.standard.set(true, forKey: migrationKey)
+            UserDefaults.standard.set(true, forKey: StorageKey.thumbnailsMigrated)
             return
         }
 
@@ -50,16 +49,12 @@ final class LocalFileService: FileSourceProtocol {
         }
 
         try? fileManager.removeItem(at: oldDir)
-        UserDefaults.standard.set(true, forKey: migrationKey)
+        UserDefaults.standard.set(true, forKey: StorageKey.thumbnailsMigrated)
     }
 
     private init() {}
 
     // MARK: - Bookmark Operations
-
-    func createBookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-    }
 
     func resolveBookmark(_ data: Data) throws -> (url: URL, isStale: Bool) {
         var isStale = false

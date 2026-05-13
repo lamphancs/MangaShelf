@@ -71,8 +71,8 @@ struct SettingsView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            rootFolderName = UserDefaults.standard.string(forKey: "rootFolderName")
-            secretFolderName = UserDefaults.standard.string(forKey: "secretFolderName")
+            rootFolderName = UserDefaults.standard.string(forKey: StorageKey.rootFolderName)
+            secretFolderName = UserDefaults.standard.string(forKey: StorageKey.secretFolderName)
         }
     }
 
@@ -310,8 +310,8 @@ struct SettingsView: View {
     private func handleFolderSelection(_ result: Result<[URL], Error>) {
         handleFolderResult(
             result,
-            bookmarkKey: "rootFolderBookmark",
-            nameKey: "rootFolderName",
+            bookmarkKey: StorageKey.rootFolderBookmark,
+            nameKey: StorageKey.rootFolderName,
             setName: { rootFolderName = $0 },
             setMessage: { scanMessage = $0 },
             scan: { await rescan() }
@@ -321,8 +321,8 @@ struct SettingsView: View {
     private func handleSecretFolderSelection(_ result: Result<[URL], Error>) {
         handleFolderResult(
             result,
-            bookmarkKey: "secretFolderBookmark",
-            nameKey: "secretFolderName",
+            bookmarkKey: StorageKey.secretFolderBookmark,
+            nameKey: StorageKey.secretFolderName,
             setName: { secretFolderName = $0 },
             setMessage: { secretScanMessage = $0 },
             scan: { await rescanSecret() }
@@ -362,12 +362,11 @@ struct SettingsView: View {
     }
 
     private func removeSecretFolder() {
-        UserDefaults.standard.removeObject(forKey: "secretFolderBookmark")
-        UserDefaults.standard.removeObject(forKey: "secretFolderName")
+        UserDefaults.standard.removeObject(forKey: StorageKey.secretFolderBookmark)
+        UserDefaults.standard.removeObject(forKey: StorageKey.secretFolderName)
         secretFolderName = nil
 
-        var descriptor = FetchDescriptor<Book>(predicate: #Predicate { $0.isSecret == true })
-        descriptor.fetchLimit = nil
+        let descriptor = FetchDescriptor<Book>(predicate: #Predicate { $0.isSecret == true })
         if let existingBooks = try? modelContext.fetch(descriptor) {
             for book in existingBooks {
                 modelContext.delete(book)

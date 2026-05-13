@@ -29,7 +29,7 @@ final class ImportService {
     @discardableResult
     func scanRootFolder(modelContext: ModelContext) async throws -> Int {
         try await scanFolder(
-            bookmarkKey: "rootFolderBookmark",
+            bookmarkKey: StorageKey.rootFolderBookmark,
             isSecret: false,
             modelContext: modelContext
         )
@@ -39,7 +39,7 @@ final class ImportService {
     @discardableResult
     func scanSecretFolder(modelContext: ModelContext) async throws -> Int {
         try await scanFolder(
-            bookmarkKey: "secretFolderBookmark",
+            bookmarkKey: StorageKey.secretFolderBookmark,
             isSecret: true,
             modelContext: modelContext
         )
@@ -85,8 +85,7 @@ final class ImportService {
         seriesFolders.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         singlePDFs.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
-        var existingDescriptor = FetchDescriptor<Book>(predicate: #Predicate { $0.isSecret == isSecret })
-        existingDescriptor.fetchLimit = nil
+        let existingDescriptor = FetchDescriptor<Book>(predicate: #Predicate { $0.isSecret == isSecret })
         let existingBooks = try modelContext.fetch(existingDescriptor)
 
         let seriesByFolder = Dictionary(
@@ -107,7 +106,6 @@ final class ImportService {
         let currentSeriesNames = Set(seriesFolders.map { $0.lastPathComponent })
         let currentSingleNames = Set(singlePDFs.map { $0.lastPathComponent })
 
-        // Mark books whose source no longer exists as unavailable (preserve data for folder switching)
         for book in existingBooks {
             let isMissing: Bool
             if book.isSeries {
@@ -151,8 +149,7 @@ final class ImportService {
     /// Sync a single series by resolving the root folder bookmark
     func syncSeriesFromRoot(_ book: Book, modelContext: ModelContext) async throws {
         guard book.isSeries, let folderName = book.folderName else { return }
-        let bookmarkKey = book.isSecret ? "secretFolderBookmark" : "rootFolderBookmark"
-        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else { return }
+        guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else { return }
 
         let (rootURL, _) = try LocalFileService.shared.resolveBookmark(bookmarkData)
 
@@ -166,18 +163,31 @@ final class ImportService {
         try modelContext.save()
     }
 
-    // MARK: - Delete & Rename
-
-    func deleteBook(_ book: Book, modelContext: ModelContext) async throws {
-        if let thumbnailURL = book.thumbnailURL, fileService.fileExists(at: thumbnailURL) {
-            try? await thumbnailService.deleteThumbnail(at: thumbnailURL)
-        }
-        modelContext.delete(book)
-        try modelContext.save()
-    }
+    // MARK: - Rename
 
     func renameBook(_ book: Book, to newTitle: String, modelContext: ModelContext) async throws {
         book.title = newTitle
+        try modelContext.save()
+    }
+
+    // MARK: - Cover
+
+    func setCustomCover(for book: Book, jpegData: Data, modelContext: ModelContext) throws {
+        let filename = customCoverName(for: book.folderName ?? book.filename)
+        let thumbnailDir = LocalFileService.shared.thumbnailsDirectory
+        let fileURL = thumbnailDir.appendingPathComponent(filename)
+
+        if let oldPath = book.thumbnailPath {
+            let oldURL = thumbnailDir.appendingPathComponent(oldPath)
+            try? FileManager.default.removeItem(at: oldURL)
+            thumbnailService.evictCachedImage(for: oldURL)
+        }
+
+        try jpegData.write(to: fileURL)
+        thumbnailService.evictCachedImage(for: fileURL)
+        book.thumbnailPath = filename
+        book.hasManualCover = true
+        book.coverVersion += 1
         try modelContext.save()
     }
 

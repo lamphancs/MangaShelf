@@ -22,7 +22,7 @@ struct LibraryView: View {
     @State private var bookForCoverPick: Book?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showPhotoPicker = false
-    @AppStorage("libraryViewMode") private var viewMode: LibraryViewMode = .grid
+    @AppStorage(StorageKey.libraryViewMode) private var viewMode: LibraryViewMode = .grid
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 20)
@@ -204,6 +204,7 @@ struct LibraryView: View {
             await viewModel.scanLibrary(modelContext: modelContext)
         }
     }
+
     private func saveCover(from item: PhotosPickerItem) async {
         guard let book = bookForCoverPick else { return }
 
@@ -211,23 +212,11 @@ struct LibraryView: View {
               let image = UIImage(data: data),
               let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
 
-        let filename = ImportService().customCoverName(for: book.folderName ?? book.filename)
-        let thumbnailDir = LocalFileService.shared.thumbnailsDirectory
-        let fileURL = thumbnailDir.appendingPathComponent(filename)
-
-        if let oldPath = book.thumbnailPath {
-            let oldURL = thumbnailDir.appendingPathComponent(oldPath)
-            try? FileManager.default.removeItem(at: oldURL)
-        }
-
         do {
-            try jpegData.write(to: fileURL)
-            ThumbnailService.shared.evictCachedImage(for: fileURL)
-            book.thumbnailPath = filename
-            book.hasManualCover = true
-            book.coverVersion += 1
-            try modelContext.save()
-        } catch {}
+            try ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
+        } catch {
+            print("Failed to set cover: \(error.localizedDescription)")
+        }
 
         bookForCoverPick = nil
     }

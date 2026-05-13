@@ -87,11 +87,11 @@ enum AccentTheme: String, CaseIterable, Identifiable {
 class ThemeManager {
 
     var selectedTheme: AppTheme {
-        didSet { UserDefaults.standard.set(selectedTheme.rawValue, forKey: "appTheme") }
+        didSet { UserDefaults.standard.set(selectedTheme.rawValue, forKey: StorageKey.appTheme) }
     }
 
     var selectedAccent: AccentTheme {
-        didSet { UserDefaults.standard.set(selectedAccent.rawValue, forKey: "accentTheme") }
+        didSet { UserDefaults.standard.set(selectedAccent.rawValue, forKey: StorageKey.accentTheme) }
     }
 
     var libraryBackground: Color { selectedTheme.libraryBackground }
@@ -100,10 +100,10 @@ class ThemeManager {
     var accent: Color { selectedAccent.color }
 
     init() {
-        let themeRaw = UserDefaults.standard.string(forKey: "appTheme") ?? AppTheme.warmBrown.rawValue
+        let themeRaw = UserDefaults.standard.string(forKey: StorageKey.appTheme) ?? AppTheme.warmBrown.rawValue
         selectedTheme = AppTheme(rawValue: themeRaw) ?? .warmBrown
 
-        let accentRaw = UserDefaults.standard.string(forKey: "accentTheme") ?? AccentTheme.blue.rawValue
+        let accentRaw = UserDefaults.standard.string(forKey: StorageKey.accentTheme) ?? AccentTheme.blue.rawValue
         selectedAccent = AccentTheme(rawValue: accentRaw) ?? .blue
     }
 }

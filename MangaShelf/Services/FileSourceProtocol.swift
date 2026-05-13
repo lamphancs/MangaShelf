@@ -9,9 +9,6 @@ import Foundation
 
 /// Protocol defining file access operations using security-scoped bookmarks
 protocol FileSourceProtocol {
-    /// Create a security-scoped bookmark for a URL
-    func createBookmark(for url: URL) throws -> Data
-
     /// Resolve a security-scoped bookmark back to a URL
     func resolveBookmark(_ data: Data) throws -> (url: URL, isStale: Bool)
 

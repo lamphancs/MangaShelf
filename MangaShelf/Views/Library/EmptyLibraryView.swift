@@ -14,7 +14,7 @@ struct EmptyLibraryView: View {
     let onOpenSettings: () -> Void
 
     private var isConfigured: Bool {
-        UserDefaults.standard.data(forKey: "rootFolderBookmark") != nil
+        UserDefaults.standard.data(forKey: StorageKey.rootFolderBookmark) != nil
     }
 
     var body: some View {

@@ -98,8 +98,8 @@ final class LibraryViewModel {
     }
 
     func scanLibrary(modelContext: ModelContext) async {
-        let hasRoot = UserDefaults.standard.data(forKey: "rootFolderBookmark") != nil
-        let hasSecret = UserDefaults.standard.data(forKey: "secretFolderBookmark") != nil
+        let hasRoot = UserDefaults.standard.data(forKey: StorageKey.rootFolderBookmark) != nil
+        let hasSecret = UserDefaults.standard.data(forKey: StorageKey.secretFolderBookmark) != nil
         guard hasRoot || hasSecret else { return }
 
         isLoading = true
