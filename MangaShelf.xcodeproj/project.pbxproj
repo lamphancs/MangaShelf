@@ -6,7 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		44BB52FA2FB43F5600455E13 /* PROJECT.md in Resources */ = {isa = PBXBuildFile; fileRef = 44BB52F92FB43F5600455E13 /* PROJECT.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		44BB52F92FB43F5600455E13 /* PROJECT.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PROJECT.md; sourceTree = "<group>"; };
 		44FC19882F9C4C2C009E0978 /* MangaShelf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MangaShelf.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,6 +39,7 @@
 			children = (
 				44FC198A2F9C4C2C009E0978 /* MangaShelf */,
 				44FC19892F9C4C2C009E0978 /* Products */,
+				44BB52F92FB43F5600455E13 /* PROJECT.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -109,6 +115,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				44BB52FA2FB43F5600455E13 /* PROJECT.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
