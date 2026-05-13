@@ -1035,25 +1035,29 @@ fileprivate struct ArtViewerOverlay: View {
                             dismiss()
                         } label: {
                             Image(systemName: "xmark")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 32, height: 32)
-                                .background(.white.opacity(0.12), in: Circle())
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial, in: Circle())
                         }
 
                         Spacer()
 
                         if !artImages.isEmpty {
                             Text("\(min(currentIndex + 1, artImages.count)) of \(artImages.count)")
-                                .font(.callout)
-                                .foregroundColor(.white.opacity(0.5))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.ultraThinMaterial, in: Capsule())
                         }
 
                         Spacer()
 
                         Color.clear.frame(width: 32, height: 32)
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 20)
                     .padding(.top, 8)
 
                     Spacer()
@@ -1062,7 +1066,36 @@ fileprivate struct ArtViewerOverlay: View {
                         thumbnailStrip
                     }
 
-                    toolbar
+                    HStack {
+                        Menu {
+                            Button {
+                                Task { await setCover() }
+                            } label: {
+                                Label("Use as Cover Image", systemImage: "book.closed")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+
+                        Spacer()
+
+                        Button(role: .destructive) {
+                            Task { await deleteArt() }
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
                 }
                 .transition(.opacity)
             }
@@ -1110,35 +1143,7 @@ fileprivate struct ArtViewerOverlay: View {
         .padding(.bottom, 6)
     }
 
-    private var toolbar: some View {
-        HStack {
-            Menu {
-                Button {
-                    Task { await setCover() }
-                } label: {
-                    Label("Use as Cover Image", systemImage: "book.closed")
-                }
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 20))
-                    .foregroundColor(.white)
-                    .frame(width: 44, height: 44)
-            }
 
-            Spacer()
-
-            Button(role: .destructive) {
-                Task { await deleteArt() }
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 20))
-                    .foregroundColor(.white)
-                    .frame(width: 44, height: 44)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
-    }
 
     private func deleteArt() async {
         let index = currentIndex
