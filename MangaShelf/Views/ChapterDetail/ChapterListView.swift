@@ -69,7 +69,9 @@ struct ChapterListView: View {
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(theme.libraryBackground, for: .navigationBar)
-        .fullScreenCover(isPresented: $showReader) {
+        .fullScreenCover(isPresented: $showReader, onDismiss: {
+            Task { await loadArtImages() }
+        }) {
             ReaderView(book: book)
         }
         .task {

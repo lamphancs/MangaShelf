@@ -14,6 +14,7 @@ struct PDFPageView: UIViewRepresentable {
     @Binding var currentPage: Int
     let onPageChange: (Int) -> Void
     let onTap: () -> Void
+    var onCaptureReady: ((@escaping () -> (UIImage, CGFloat)?) -> Void)? = nil
 
     func makeUIView(context: Context) -> UIView {
         let scrollView = UIScrollView()
@@ -28,6 +29,15 @@ struct PDFPageView: UIViewRepresentable {
 
         context.coordinator.scrollView = scrollView
         context.coordinator.contentView = contentView
+
+        onCaptureReady?({ [weak scrollView] in
+            guard let scrollView else { return nil }
+            let renderer = UIGraphicsImageRenderer(bounds: scrollView.bounds)
+            let image = renderer.image { _ in
+                scrollView.drawHierarchy(in: scrollView.bounds, afterScreenUpdates: false)
+            }
+            return (image, max(0, scrollView.contentOffset.y))
+        })
 
         let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap))
         doubleTap.numberOfTapsRequired = 2

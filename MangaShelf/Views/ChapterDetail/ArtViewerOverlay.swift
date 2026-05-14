@@ -206,14 +206,13 @@ struct ArtViewerOverlay: View {
         guard index >= 0, index < artImages.count else { return }
         let item = artImages[index]
         await onDeleteFile(item.id)
-        _ = withAnimation {
+        withAnimation {
             artImages.remove(at: index)
-        }
-        if currentIndex >= artImages.count {
-            currentIndex = max(0, artImages.count - 1)
-        }
-        if artImages.isEmpty {
-            dismiss()
+            if artImages.isEmpty {
+                dismiss()
+            } else if currentIndex >= artImages.count {
+                currentIndex = artImages.count - 1
+            }
         }
     }
 

@@ -40,6 +40,8 @@ final class ReaderViewModel {
         book.isSeries && currentChapterIndex < sortedChapters.count - 1
     }
 
+    var captureViewport: (() -> (UIImage, CGFloat)?)?
+
     private var accessedURL: URL?
     private var folderURL: URL?
     private var hasSecurityAccess = false
@@ -193,6 +195,43 @@ final class ReaderViewModel {
         }
         book.lastReadDate = Date()
         try? modelContext.save()
+    }
+
+    // MARK: - Screenshot Capture
+
+    func captureCurrentPage() async -> Bool {
+        guard book.isSeries,
+              let folder = folderURL,
+              let (image, scrollOffset) = captureViewport?() else { return false }
+
+        let chapterNum: Int
+        if let chapter = currentChapter,
+           let numStr = chapter.extractedNumber,
+           let n = Int(numStr) {
+            chapterNum = n
+        } else {
+            chapterNum = currentChapterIndex + 1
+        }
+
+        let offsetKey = Int(scrollOffset * 10)
+        let filename = String(format: "ch%03d_p%04d_y%08d.jpg", chapterNum, currentPage + 1, offsetKey)
+        let artFolder = folder.appendingPathComponent("Art")
+
+        guard let jpegData = image.jpegData(compressionQuality: 0.9) else { return false }
+
+        return await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: artFolder.path) {
+                try? fm.createDirectory(at: artFolder, withIntermediateDirectories: true)
+            }
+            let fileURL = artFolder.appendingPathComponent(filename)
+            do {
+                try jpegData.write(to: fileURL)
+                return true
+            } catch {
+                return false
+            }
+        }.value
     }
 
     // MARK: - Private

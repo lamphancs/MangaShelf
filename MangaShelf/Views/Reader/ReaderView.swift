@@ -17,6 +17,7 @@ struct ReaderView: View {
     let book: Book
 
     @State private var viewModel: ReaderViewModel
+    @State private var showCaptureFlash = false
 
     init(book: Book) {
         self.book = book
@@ -36,6 +37,9 @@ struct ReaderView: View {
                 },
                 onTap: {
                     viewModel.toggleOverlay()
+                },
+                onCaptureReady: { captureFunc in
+                    viewModel.captureViewport = captureFunc
                 }
             )
             .ignoresSafeArea()
@@ -110,6 +114,36 @@ struct ReaderView: View {
                     viewModel.goToChapter(index: index, modelContext: modelContext)
                 }
             )
+
+            if book.isSeries {
+                VStack {
+                    Spacer()
+                    Spacer()
+                    Spacer()
+                    Button {
+                        captureScreenshot()
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    }
+                    .accessibilityLabel("Capture page")
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 12)
+                .opacity(viewModel.isOverlayVisible ? 1 : 0)
+                .animation(.easeInOut(duration: 0.25), value: viewModel.isOverlayVisible)
+            }
+
+            Color.white
+                .ignoresSafeArea()
+                .opacity(showCaptureFlash ? 0.6 : 0)
+                .allowsHitTesting(false)
         }
         .statusBar(hidden: !viewModel.isOverlayVisible)
         .onAppear {
@@ -124,6 +158,22 @@ struct ReaderView: View {
             viewModel.cleanup()
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func captureScreenshot() {
+        Task {
+            let success = await viewModel.captureCurrentPage()
+            if success {
+                UIImpactFeedbackGenerator.impact(.medium)
+                withAnimation(.easeIn(duration: 0.05)) {
+                    showCaptureFlash = true
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+                withAnimation(.easeOut(duration: 0.3)) {
+                    showCaptureFlash = false
+                }
+            }
+        }
     }
 }
 
