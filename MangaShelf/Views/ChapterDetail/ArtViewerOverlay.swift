@@ -10,12 +10,30 @@ struct ArtItem: Identifiable {
     let image: UIImage
 }
 
+private struct ClearFullScreenBackground: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = BackgroundRemovalView()
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    private class BackgroundRemovalView: UIView {
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            superview?.superview?.backgroundColor = .clear
+        }
+    }
+}
+
 struct ArtViewerOverlay: View {
     @State private var artImages: [ArtItem]
     @State private var currentIndex: Int
     @State private var controlsVisible = true
     @State private var dragOffset: CGFloat = 0
     @State private var showCropMode = false
+    @State private var isDismissing = false
+    @State private var appeared = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(ThemeManager.self) private var theme
@@ -37,9 +55,10 @@ struct ArtViewerOverlay: View {
 
     var body: some View {
         let dragProgress = min(abs(dragOffset) / 300, 1.0)
+        let backgroundOpacity = isDismissing ? 0.0 : (1.0 - dragProgress * 0.5)
 
         ZStack {
-            Color.black.opacity(1 - dragProgress * 0.5)
+            Color.black.opacity(backgroundOpacity)
                 .ignoresSafeArea()
 
             if !artImages.isEmpty {
@@ -47,12 +66,15 @@ struct ArtViewerOverlay: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: isDismissing ? 24 : dragProgress * 16))
                     .ignoresSafeArea()
-                    .offset(y: dragOffset)
-                    .scaleEffect(1 - dragProgress * 0.15)
+                    .offset(y: isDismissing ? 0 : dragOffset)
+                    .scaleEffect(isDismissing ? 0.4 : 1 - dragProgress * 0.15)
+                    .opacity(isDismissing ? 0 : 1)
                     .gesture(
                         DragGesture(minimumDistance: 20)
                             .onChanged { value in
+                                guard !isDismissing else { return }
                                 if abs(value.translation.height) > abs(value.translation.width) {
                                     dragOffset = value.translation.height
                                     if controlsVisible && abs(dragOffset) > 10 {
@@ -63,9 +85,13 @@ struct ArtViewerOverlay: View {
                                 }
                             }
                             .onEnded { value in
+                                guard !isDismissing else { return }
                                 if abs(value.translation.height) > abs(value.translation.width) {
-                                    if abs(dragOffset) > 120 {
-                                        dismiss()
+                                    let velocity = value.predictedEndTranslation.height - value.translation.height
+                                    let shouldDismiss = abs(dragOffset) > 120 || abs(velocity) > 800
+
+                                    if shouldDismiss {
+                                        performDismiss(direction: dragOffset > 0 ? 1 : -1)
                                     } else if dragOffset != 0 {
                                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                             dragOffset = 0
@@ -90,11 +116,11 @@ struct ArtViewerOverlay: View {
                     }
             }
 
-            if controlsVisible {
+            if controlsVisible && !isDismissing {
                 VStack(spacing: 0) {
                     HStack {
                         Button {
-                            dismiss()
+                            performDismiss(direction: -1)
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 20, weight: .bold))
@@ -190,6 +216,7 @@ struct ArtViewerOverlay: View {
                 .transition(.opacity)
             }
         }
+        .background(ClearFullScreenBackground())
         .preferredColorScheme(.dark)
         .statusBarHidden(!controlsVisible)
     }
@@ -231,6 +258,16 @@ struct ArtViewerOverlay: View {
         }
         .padding(.top, 10)
         .padding(.bottom, 6)
+    }
+
+    private func performDismiss(direction: CGFloat) {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isDismissing = true
+            dragOffset = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            dismiss()
+        }
     }
 
     private func deleteArt() async {
