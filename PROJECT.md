@@ -18,7 +18,7 @@ iOS 18+ SwiftUI manga/comic reader that imports PDF files from user-selected fol
 | Secret library (hidden behind long-press) | `isSecret` flag on `Book`, separate bookmark key |
 | Theme & accent color customization | `ThemeManager` (persisted via UserDefaults) |
 | Splash screen | `SplashScreenView` |
-| Settings (folder picker, reset, theme) | `SettingsView` |
+| Settings (folder picker, reset, theme, open in Files) | `SettingsView` |
 
 ## Data Layer
 

@@ -211,6 +211,17 @@ struct SettingsView: View {
                             .padding(14)
                     }
                     .disabled(isScanning)
+
+                    Divider().background(Color.white.opacity(0.06))
+
+                    Button {
+                        openFolder(bookmarkKey: StorageKey.rootFolderBookmark)
+                    } label: {
+                        Label("Open in Files", systemImage: "folder")
+                            .foregroundColor(theme.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                    }
                 }
             }
             .font(.subheadline)
@@ -279,6 +290,17 @@ struct SettingsView: View {
                             .padding(14)
                     }
                     .disabled(isScanningSecret)
+
+                    Divider().background(Color.white.opacity(0.06))
+
+                    Button {
+                        openFolder(bookmarkKey: StorageKey.secretFolderBookmark)
+                    } label: {
+                        Label("Open in Files", systemImage: "folder")
+                            .foregroundColor(theme.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                    }
 
                     Divider().background(Color.white.opacity(0.06))
 
@@ -358,6 +380,18 @@ struct SettingsView: View {
 
         case .failure(let error):
             setMessage("Error: \(error.localizedDescription)")
+        }
+    }
+
+    private func openFolder(bookmarkKey: String) {
+        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey),
+              let (url, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
+              url.startAccessingSecurityScopedResource() else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        let encoded = url.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? url.path
+        if let filesURL = URL(string: "shareddocuments://\(encoded)") {
+            UIApplication.shared.open(filesURL)
         }
     }
 
