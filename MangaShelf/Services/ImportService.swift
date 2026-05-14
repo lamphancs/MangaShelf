@@ -247,6 +247,25 @@ final class ImportService {
             chapter.book = book
             modelContext.insert(chapter)
         }
+
+        if let seriesData = await BookDataService.shared.load(seriesFolderURL: folderURL) {
+            book.seriesNote = seriesData.note
+            book.seriesURL = seriesData.url
+            if seriesData.currentChapterIndex > 0 {
+                book.currentChapterIndex = min(seriesData.currentChapterIndex, max(0, chapters.count - 1))
+            }
+            book.lastReadDate = seriesData.lastReadDate
+            for chapter in chapters {
+                if let savedPage = seriesData.chapterProgress[chapter.filename] {
+                    chapter.lastReadPage = savedPage
+                }
+            }
+            for entry in seriesData.bookmarks {
+                let bookmark = Bookmark(chapterIndex: entry.chapterIndex, note: entry.note, colorName: entry.color)
+                bookmark.book = book
+                modelContext.insert(bookmark)
+            }
+        }
     }
 
     private func createSingleBook(from pdfURL: URL, isSecret: Bool = false, modelContext: ModelContext) async throws {

@@ -13,6 +13,7 @@ iOS 18+ SwiftUI manga/comic reader that imports PDF files from user-selected fol
 | Art album (photos picker + viewer overlay) | `ChapterListView` art section → `ArtViewerOverlay` |
 | Reader screenshot capture to art album | `ReaderView` floating button → `ReaderViewModel.captureCurrentPage()` |
 | Reading progress & bookmarks | `Book.readingProgress`, `Bookmark` model |
+| Portable series data (note, link, progress, bookmarks saved to folder) | `BookDataService` → `.mangashelf/data.json` |
 | Secret library (hidden behind long-press) | `isSecret` flag on `Book`, separate bookmark key |
 | Theme & accent color customization | `ThemeManager` (persisted via UserDefaults) |
 | Splash screen | `SplashScreenView` |
@@ -39,6 +40,7 @@ All keys are centralized in `StorageKey` (Constants.swift): root/secret folder b
 | `LocalFileService` | Security-scoped bookmark resolution, file existence/size checks, thumbnail directory management, one-time migration from Caches → Application Support |
 | `ImportService` | Scans root/secret folders, upserts `Book`/`Chapter` records, generates thumbnails, handles rename and custom cover operations |
 | `ThumbnailService` | Generates PDF first-page thumbnails, manages `NSCache<NSString, UIImage>` (100 items / 50 MB), provides async cached image loading |
+| `BookDataService` | Reads/writes `.mangashelf/data.json` inside each series folder — syncs notes, links, reading progress, and bookmarks to disk so data travels with the folder |
 | `FileSourceProtocol` | Abstraction over file operations (resolve bookmark, delete, exists, size) for testability |
 
 ## Key Flows
@@ -61,6 +63,14 @@ All keys are centralized in `StorageKey` (Constants.swift): root/secret folder b
 - `ThumbnailService` maintains an in-memory `NSCache` for loaded `UIImage` instances
 - Cover version tracking (`Book.coverVersion`) invalidates stale cached views
 
+### Portable Series Data
+- Each series folder contains a `.mangashelf/data.json` file with notes, links, reading progress, and bookmarks
+- `BookDataService` syncs bidirectionally: SwiftData is the primary store; `data.json` mirrors it on disk
+- On series creation (`ImportService`), existing `data.json` is restored into SwiftData
+- On series open (`ChapterListView`), disk data is merged into SwiftData if SwiftData fields are empty
+- On every save (note/link/bookmark/progress edit), both SwiftData and disk are updated
+- Folder structure: `SeriesName/.mangashelf/data.json` (alongside the existing `Art/` folder)
+
 ## File Structure
 
 ```
@@ -75,8 +85,8 @@ MangaShelf/MangaShelf/
 │   ├── Reader/                 ReaderView, ReaderOverlayView, PDFPageView
 │   ├── Settings/               SettingsView
 │   └── Components/             SplashScreenView
-├── Services/                   FileSourceProtocol, ImportService,
-│                               LocalFileService, ThumbnailService
+├── Services/                   BookDataService, FileSourceProtocol,
+│                               ImportService, LocalFileService, ThumbnailService
 ├── Utilities/                  Constants, Extensions, ThemeManager
 └── Resources/                  Assets.xcassets
 ```

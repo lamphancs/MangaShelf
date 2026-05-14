@@ -195,6 +195,10 @@ final class ReaderViewModel {
         }
         book.lastReadDate = Date()
         try? modelContext.save()
+
+        if let folderURL {
+            Task { await BookDataService.shared.save(book: book, seriesFolderURL: folderURL) }
+        }
     }
 
     // MARK: - Screenshot Capture

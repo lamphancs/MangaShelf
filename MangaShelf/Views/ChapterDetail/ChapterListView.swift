@@ -76,6 +76,8 @@ struct ChapterListView: View {
         }
         .task {
             await syncChapters()
+            await BookDataService.shared.restoreIfNeeded(book: book, modelContext: modelContext)
+            await BookDataService.shared.save(book: book)
             await loadCoverImage()
             await loadArtImages()
         }
@@ -513,6 +515,7 @@ struct ChapterListView: View {
                         Button(role: .destructive) {
                             modelContext.delete(existing)
                             try? modelContext.save()
+                            saveBookData()
                         } label: {
                             Label("Remove Bookmark", systemImage: "bookmark.slash")
                         }
@@ -623,6 +626,7 @@ struct ChapterListView: View {
                             book.seriesURL = nil
                             try? modelContext.save()
                             showEditSeriesURL = false
+                            saveBookData()
                         } label: {
                             Label("Remove Link", systemImage: "trash")
                         }
@@ -646,6 +650,7 @@ struct ChapterListView: View {
                         book.seriesURL = trimmed.isEmpty ? nil : trimmed
                         try? modelContext.save()
                         showEditSeriesURL = false
+                        saveBookData()
                     }
                     .fontWeight(.semibold)
                     .foregroundColor(theme.accent)
@@ -671,6 +676,7 @@ struct ChapterListView: View {
                             book.seriesNote = nil
                             try? modelContext.save()
                             showEditSeriesNote = false
+                            saveBookData()
                         } label: {
                             Label("Remove Note", systemImage: "trash")
                         }
@@ -694,6 +700,7 @@ struct ChapterListView: View {
                         book.seriesNote = trimmed.isEmpty ? nil : trimmed
                         try? modelContext.save()
                         showEditSeriesNote = false
+                        saveBookData()
                     }
                     .fontWeight(.semibold)
                     .foregroundColor(theme.accent)
@@ -719,6 +726,7 @@ struct ChapterListView: View {
         bookmark.book = book
         modelContext.insert(bookmark)
         try? modelContext.save()
+        saveBookData()
     }
 
     private func loadCoverImage() async {
@@ -928,6 +936,10 @@ struct ChapterListView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .background(isCurrentChapter ? theme.accent.opacity(0.08) : Color.clear)
+    }
+
+    private func saveBookData() {
+        Task { await BookDataService.shared.save(book: book) }
     }
 
     private func bookmarkFor(index: Int) -> Bookmark? {
