@@ -15,6 +15,7 @@ struct ArtViewerOverlay: View {
     @State private var currentIndex: Int
     @State private var controlsVisible = true
     @State private var dragOffset: CGFloat = 0
+    @State private var showCropMode = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(ThemeManager.self) private var theme
@@ -127,7 +128,9 @@ struct ArtViewerOverlay: View {
                     HStack {
                         Menu {
                             Button {
-                                Task { await setCover() }
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    showCropMode = true
+                                }
                             } label: {
                                 Label("Use as Cover Image", systemImage: "book.closed")
                             }
@@ -155,6 +158,24 @@ struct ArtViewerOverlay: View {
                     .padding(.top, 8)
                     .padding(.bottom, 8)
                 }
+                .transition(.opacity)
+            }
+
+            if showCropMode, currentIndex >= 0, currentIndex < artImages.count {
+                CoverCropOverlay(
+                    image: artImages[currentIndex].image,
+                    onConfirm: { croppedImage in
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showCropMode = false
+                        }
+                        Task { await onSetCover(croppedImage) }
+                    },
+                    onCancel: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showCropMode = false
+                        }
+                    }
+                )
                 .transition(.opacity)
             }
         }
@@ -214,11 +235,5 @@ struct ArtViewerOverlay: View {
                 currentIndex = artImages.count - 1
             }
         }
-    }
-
-    private func setCover() async {
-        let index = currentIndex
-        guard index >= 0, index < artImages.count else { return }
-        await onSetCover(artImages[index].image)
     }
 }

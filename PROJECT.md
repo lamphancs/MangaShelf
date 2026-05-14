@@ -11,6 +11,7 @@ iOS 18+ SwiftUI manga/comic reader that imports PDF files from user-selected fol
 | PDF reader (single-page, scroll modes) | `ReaderView` → `ReaderViewModel` → `PDFPageView` |
 | Chapter navigation for multi-PDF series | `ChapterListView` |
 | Art album (photos picker + viewer overlay) | `ChapterListView` art section → `ArtViewerOverlay` |
+| Cover crop selection (draggable 2:3 box to pick cover region, outputs 400×600) | `ArtViewerOverlay` → `CoverCropOverlay` |
 | Reader screenshot capture to art album | `ReaderView` floating button → `ReaderViewModel.captureCurrentPage()` |
 | Reading progress & bookmarks | `Book.readingProgress`, `Bookmark` model |
 | Portable series data (note, link, progress, bookmarks saved to folder) | `BookDataService` → `.mangashelf/data.json` |
@@ -81,7 +82,7 @@ MangaShelf/MangaShelf/
 ├── Views/
 │   ├── Library/                LibraryView, BookCardView, BookRowView,
 │   │                           EmptyLibraryView, SortMenuView
-│   ├── ChapterDetail/          ChapterListView, ArtViewerOverlay
+│   ├── ChapterDetail/          ChapterListView, ArtViewerOverlay, CoverCropOverlay
 │   ├── Reader/                 ReaderView, ReaderOverlayView, PDFPageView
 │   ├── Settings/               SettingsView
 │   └── Components/             SplashScreenView
