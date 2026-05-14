@@ -12,9 +12,6 @@ protocol FileSourceProtocol {
     /// Resolve a security-scoped bookmark back to a URL
     func resolveBookmark(_ data: Data) throws -> (url: URL, isStale: Bool)
 
-    /// Delete a file from storage
-    func deleteFile(at fileURL: URL) async throws
-
     /// Check if a file exists at the given path
     func fileExists(at fileURL: URL) -> Bool
 

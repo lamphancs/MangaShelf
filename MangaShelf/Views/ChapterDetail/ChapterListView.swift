@@ -33,6 +33,7 @@ struct ChapterListView: View {
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var artViewerItem: ArtViewerItem?
+    @State private var coverDisplayIndex: Int = 0
 
     private struct ArtViewerItem: Identifiable {
         let id = UUID()
@@ -138,15 +139,54 @@ struct ChapterListView: View {
 
     // MARK: - Cover Header
 
+    private var coverCarouselImages: [UIImage] {
+        var images: [UIImage] = []
+        if let cover = coverImage {
+            images.append(cover)
+        }
+        images.append(contentsOf: artImages.map(\.image))
+        return images
+    }
+
     private var coverHeader: some View {
-        VStack {
-            if let cover = coverImage {
-                let aspect = cover.size.width / cover.size.height
+        let images = coverCarouselImages
+
+        return VStack(spacing: 0) {
+            if images.count > 1 {
+                let baseImage = images[0]
+                let aspect = baseImage.size.width / baseImage.size.height
+
                 Color.clear
                     .aspectRatio(aspect, contentMode: .fit)
                     .frame(maxHeight: maxCoverHeight)
                     .overlay {
-                        Image(uiImage: cover)
+                        TabView(selection: $coverDisplayIndex) {
+                            ForEach(Array(images.enumerated()), id: \.offset) { index, img in
+                                Color.clear
+                                    .overlay {
+                                        Image(uiImage: img)
+                                            .resizable()
+                                            .scaledToFill()
+                                    }
+                                    .clipped()
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { handleCoverTap() }
+                                    .tag(index)
+                            }
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                    }
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: (dominantColor ?? theme.accent).opacity(0.6), radius: 40, x: 0, y: 0)
+                    .shadow(color: (dominantColor ?? theme.accent).opacity(0.3), radius: 80, x: 0, y: 0)
+            } else if let singleImage = images.first {
+                let aspect = singleImage.size.width / singleImage.size.height
+                Color.clear
+                    .aspectRatio(aspect, contentMode: .fit)
+                    .frame(maxHeight: maxCoverHeight)
+                    .overlay {
+                        Image(uiImage: singleImage)
                             .resizable()
                             .scaledToFill()
                     }
@@ -154,6 +194,7 @@ struct ChapterListView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .shadow(color: (dominantColor ?? theme.accent).opacity(0.6), radius: 40, x: 0, y: 0)
                     .shadow(color: (dominantColor ?? theme.accent).opacity(0.3), radius: 80, x: 0, y: 0)
+                    .onTapGesture { handleCoverTap() }
             } else {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(theme.cardBackground)
@@ -175,6 +216,23 @@ struct ChapterListView: View {
         }
         .padding(.horizontal, 40)
         .padding(.top, 8)
+        .onChange(of: artImages.count) { _, _ in
+            let maxIndex = coverCarouselImages.count - 1
+            if coverDisplayIndex > maxIndex {
+                coverDisplayIndex = max(maxIndex, 0)
+            }
+        }
+    }
+
+    private func handleCoverTap() {
+        guard !artImages.isEmpty else { return }
+        let artIndex: Int
+        if coverImage != nil {
+            artIndex = max(coverDisplayIndex - 1, 0)
+        } else {
+            artIndex = coverDisplayIndex
+        }
+        artViewerItem = ArtViewerItem(index: artIndex)
     }
 
     // MARK: - Info Section

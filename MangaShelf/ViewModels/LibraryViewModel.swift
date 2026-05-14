@@ -18,14 +18,6 @@ enum LibrarySortOption: String, CaseIterable {
     case recentlyAdded = "Recently Added"
     case alphabetical = "A\u{2013}Z"
     case lastRead = "Last Read"
-
-    var systemImage: String {
-        switch self {
-        case .recentlyAdded: return "clock.fill"
-        case .alphabetical: return "textformat.abc"
-        case .lastRead: return "book.fill"
-        }
-    }
 }
 
 @MainActor

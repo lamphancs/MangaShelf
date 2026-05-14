@@ -64,10 +64,6 @@ final class LocalFileService: FileSourceProtocol {
 
     // MARK: - File Operations
 
-    func deleteFile(at fileURL: URL) async throws {
-        try fileManager.removeItem(at: fileURL)
-    }
-
     func fileExists(at fileURL: URL) -> Bool {
         fileManager.fileExists(atPath: fileURL.path)
     }

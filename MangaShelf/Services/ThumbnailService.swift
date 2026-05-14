@@ -128,11 +128,6 @@ final class ThumbnailService {
         }
     }
 
-    /// Delete a thumbnail
-    func deleteThumbnail(at thumbnailURL: URL) async throws {
-        try await fileService.deleteFile(at: thumbnailURL)
-    }
-
     /// Get the number of pages in a PDF
     /// - Parameter pdfURL: URL of the PDF file
     /// - Returns: Number of pages, or 0 if the PDF couldn't be opened
