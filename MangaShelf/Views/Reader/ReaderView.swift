@@ -171,6 +171,7 @@ struct ReaderView: View {
                 try? await Task.sleep(for: .milliseconds(100))
                 withAnimation(.easeOut(duration: 0.3)) {
                     showCaptureFlash = false
+                    viewModel.isOverlayVisible = false
                 }
             }
         }
