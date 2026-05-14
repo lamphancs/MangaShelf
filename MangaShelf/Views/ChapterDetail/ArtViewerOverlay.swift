@@ -22,14 +22,17 @@ struct ArtViewerOverlay: View {
 
     let onDeleteFile: (String) async -> Void
     let onSetCover: (UIImage) async -> Void
+    var onOpenInFolder: (() -> Void)?
 
     init(artImages: [ArtItem], initialIndex: Int,
          onDeleteFile: @escaping (String) async -> Void,
-         onSetCover: @escaping (UIImage) async -> Void) {
+         onSetCover: @escaping (UIImage) async -> Void,
+         onOpenInFolder: (() -> Void)? = nil) {
         _artImages = State(initialValue: artImages)
         _currentIndex = State(initialValue: min(initialIndex, max(artImages.count - 1, 0)))
         self.onDeleteFile = onDeleteFile
         self.onSetCover = onSetCover
+        self.onOpenInFolder = onOpenInFolder
     }
 
     var body: some View {
@@ -133,6 +136,14 @@ struct ArtViewerOverlay: View {
                                 }
                             } label: {
                                 Label("Use as Cover Image", systemImage: "book.closed")
+                            }
+
+                            if let onOpenInFolder {
+                                Button {
+                                    onOpenInFolder()
+                                } label: {
+                                    Label("Show in Files", systemImage: "folder")
+                                }
                             }
                         } label: {
                             Image(systemName: "ellipsis")

@@ -104,6 +104,9 @@ struct ChapterListView: View {
                 },
                 onSetCover: { image in
                     await setImageAsCover(image)
+                },
+                onOpenInFolder: {
+                    openArtFolder()
                 }
             )
         }
@@ -861,6 +864,20 @@ struct ChapterListView: View {
         let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
         let fileURL = artFolder.appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func openArtFolder() {
+        guard book.isSeries, let folderName = book.folderName else { return }
+        guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
+              rootURL.startAccessingSecurityScopedResource() else { return }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
+        let encoded = artFolder.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artFolder.path
+        if let url = URL(string: "shareddocuments://\(encoded)") {
+            UIApplication.shared.open(url)
+        }
     }
 
     private func setImageAsCover(_ image: UIImage) async {
