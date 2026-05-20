@@ -44,15 +44,17 @@ struct SplashScreenView: View {
             }
         }
         .task {
-            withAnimation(.easeOut(duration: 0.5)) {
+            withAnimation(.easeOut(duration: 0.35)) {
                 iconScale = 1.0
                 iconOpacity = 1.0
             }
-            withAnimation(.easeOut(duration: 0.4).delay(0.25)) {
+            withAnimation(.easeOut(duration: 0.3).delay(0.15)) {
                 titleOpacity = 1.0
                 titleOffset = 0
             }
-            try? await Task.sleep(for: .seconds(1.6))
+            // Library renders from SwiftData immediately; reconciliation runs silently
+            // in the background. Splash duration is now purely a UX minimum, not a wait.
+            try? await Task.sleep(for: .seconds(0.65))
             onFinished()
         }
     }

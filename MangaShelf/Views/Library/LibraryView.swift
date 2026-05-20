@@ -13,6 +13,7 @@ struct LibraryView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(ThemeManager.self) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var books: [Book]
 
     @State private var viewModel = LibraryViewModel()
@@ -145,6 +146,14 @@ struct LibraryView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
+                    if viewModel.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(theme.accent)
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
                     Image(systemName: "gearshape")
                         .font(.body)
                         .fontWeight(.semibold)
@@ -161,7 +170,7 @@ struct LibraryView: View {
                 }
             }
             .sheet(isPresented: $showSettings, onDismiss: {
-                Task { await viewModel.scanLibrary(modelContext: modelContext) }
+                Task { await viewModel.quickRefresh(modelContext: modelContext) }
             }) {
                 SettingsView(isSecretMode: viewModel.isSecretMode)
             }
@@ -201,7 +210,14 @@ struct LibraryView: View {
             }
         }
         .task {
-            await viewModel.scanLibrary(modelContext: modelContext)
+            await viewModel.quickRefresh(modelContext: modelContext)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Reconcile when the user returns from Files-app edits, etc. Cheap thanks
+            // to per-folder signature short-circuiting in `ImportService`.
+            if newPhase == .active {
+                Task { await viewModel.quickRefresh(modelContext: modelContext) }
+            }
         }
     }
 
@@ -213,7 +229,7 @@ struct LibraryView: View {
               let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
 
         do {
-            try ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
+            try await ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
         } catch {
             print("Failed to set cover: \(error.localizedDescription)")
         }

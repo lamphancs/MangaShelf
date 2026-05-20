@@ -942,7 +942,7 @@ struct ChapterListView: View {
         guard let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
 
         do {
-            try ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
+            try await ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
             coverImage = image
             if let color = image.dominantColor() {
                 dominantColor = Color(color)

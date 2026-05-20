@@ -54,7 +54,8 @@ final class Book {
     /// Security-scoped bookmark data for accessing the original file/folder
     var bookmarkData: Data? = nil
 
-    /// Whether the user manually picked a cover (don't overwrite on rescan)
+    /// Whether the user manually picked a cover. Mirrors `<folder>/.mangashelf/cover.jpg`
+    /// presence for series; the folder file is the source of truth.
     var hasManualCover: Bool = false
 
     /// Incremented when cover image changes, used to invalidate cached views
@@ -63,7 +64,8 @@ final class Book {
     /// Whether this book belongs to the secret library
     var isSecret: Bool = false
 
-    /// Whether this book's source files are present in the current root folder
+    /// Cache marker. Books whose folder is missing are deleted on scan, so this is
+    /// effectively always `true` for live rows. Retained for SwiftData migration safety.
     var isAvailable: Bool = true
 
     /// URL link to the series (e.g. manga website)
@@ -71,6 +73,12 @@ final class Book {
 
     /// User note for this series
     var seriesNote: String?
+
+    /// Cheap fingerprint of the on-disk series folder (`"{folder mtime}_{pdf count}"`).
+    /// `ImportService` skips per-folder reconciliation on launch when this matches the
+    /// freshly-computed value. `nil` means "never scanned with the signature path" —
+    /// the next scan will do a full sync and set it. Always `nil` for single PDFs.
+    var folderSignature: String? = nil
 
     /// Chapters in this series
     @Relationship(deleteRule: .cascade, inverse: \Chapter.book) var chapters: [Chapter]?

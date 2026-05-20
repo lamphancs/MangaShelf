@@ -11,6 +11,7 @@ enum StorageKey {
     static let rootFolderName = "rootFolderName"
     static let secretFolderName = "secretFolderName"
     static let thumbnailsMigrated = "thumbnailsMigratedToAppSupport"
+    static let folderDataMigrated = "folderDataMigratedToSeriesFolders"
     static let appTheme = "appTheme"
     static let accentTheme = "accentTheme"
     static let libraryViewMode = "libraryViewMode"

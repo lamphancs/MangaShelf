@@ -37,9 +37,10 @@ struct SettingsView: View {
                 VStack(spacing: 24) {
                     themeSection
                     accentSection
-                    librarySection
                     if isSecretMode {
                         secretLibrarySection
+                    } else {
+                        librarySection
                     }
                 }
                 .padding(.horizontal, 16)
@@ -416,7 +417,7 @@ struct SettingsView: View {
         defer { isScanningSecret = false }
 
         do {
-            let count = try await ImportService().scanSecretFolder(modelContext: modelContext)
+            let count = try await ImportService().scanSecretFolder(modelContext: modelContext, force: true)
             secretScanMessage = "Found \(count) secret series"
         } catch {
             secretScanMessage = "Scan failed: \(error.localizedDescription)"
@@ -429,7 +430,7 @@ struct SettingsView: View {
         defer { isScanning = false }
 
         do {
-            let count = try await ImportService().scanRootFolder(modelContext: modelContext)
+            let count = try await ImportService().scanRootFolder(modelContext: modelContext, force: true)
             scanMessage = "Found \(count) manga series"
         } catch {
             scanMessage = "Scan failed: \(error.localizedDescription)"

@@ -2,7 +2,7 @@
 
 ## 1. App Overview
 
-MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from user-selected folders on device. Users pick a root folder containing manga series (subfolders of chapter PDFs) or standalone PDF files. The app scans, catalogs, and renders them with a custom CALayer-based PDF renderer. It supports reading progress tracking, bookmarks, art albums, cover customization, and a hidden "secret shelf" library. Architecture is MVVM with SwiftData for persistence and security-scoped bookmarks for file access.
+MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from user-selected folders on device. Users pick a root folder containing manga series (subfolders of chapter PDFs) or standalone PDF files. The app scans, catalogs, and renders them with a custom CALayer-based PDF renderer. It supports reading progress tracking, bookmarks, art albums, cover customization, and a hidden "secret shelf" library. Architecture is MVVM with SwiftData as a **derived cache** of folder contents; each series folder owns its own metadata in `<folder>/.mangashelf/` (cover image + JSON), so renaming, moving, or copying a folder preserves all per-series state without app-side reconciliation.
 
 ## 2. Feature Map
 
@@ -45,12 +45,13 @@ MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from 
 | `folderName` | `String?` | Folder name in root directory (series only) |
 | `currentChapterIndex` | `Int` | Index into `sortedChapters` for current reading position (series only) |
 | `bookmarkData` | `Data?` | **DEPRECATED.** Unused, retained for migration avoidance. Always `nil`. |
-| `hasManualCover` | `Bool` | `true` if user set a custom cover (prevents overwrite on rescan) |
-| `coverVersion` | `Int` | Incremented on cover change, used to invalidate cached thumbnail views |
+| `hasManualCover` | `Bool` | Mirrors `<folder>/.mangashelf/cover.jpg` presence on the last scan (source of truth is the folder file) |
+| `coverVersion` | `Int` | Incremented when the folder cover content changes; used to invalidate cached thumbnail views |
 | `isSecret` | `Bool` | `true` if book belongs to the secret shelf |
-| `isAvailable` | `Bool` | `false` when source files are no longer present in root folder |
+| `isAvailable` | `Bool` | **Effectively dead.** Missing books are now deleted on scan. Field retained for SwiftData migration safety. |
 | `seriesURL` | `String?` | User-provided URL link for the series |
 | `seriesNote` | `String?` | User-provided note for the series |
+| `folderSignature` | `String?` | Cheap fingerprint (`"{folder mtime}_{pdf count}"`) of the series folder. Lets `ImportService` skip per-folder reconciliation on launch when the disk hasn't changed. Always `nil` for single PDFs. |
 | `chapters` | `[Chapter]?` | `@Relationship(deleteRule: .cascade, inverse: \Chapter.book)` |
 | `bookmarks` | `[Bookmark]?` | `@Relationship(deleteRule: .cascade, inverse: \Bookmark.book)` |
 
@@ -91,6 +92,7 @@ Supporting enum: `BookmarkColor` (11 system colors, `.red` through `.pink`).
 | `rootFolderName` | Display name of the root folder |
 | `secretFolderName` | Display name of the secret folder |
 | `thumbnailsMigrated` | Flag: one-time migration from Caches to Application Support completed |
+| `folderDataMigratedToSeriesFolders` | Flag: one-time migration of app-side per-series state (cover, dateAdded, custom title) into each folder's `.mangashelf/` completed |
 | `appTheme` | Selected `AppTheme` raw value |
 | `accentTheme` | Selected `AccentTheme` raw value |
 | `libraryViewMode` | Grid or list mode for library display |
@@ -111,15 +113,14 @@ Conforms to `FileSourceProtocol` for testability abstraction.
 
 ### ImportService
 
-**Responsibility:** Scans root/secret folders, upserts Book/Chapter records, generates thumbnails, handles rename and custom cover operations.
+**Responsibility:** Scans root/secret folders and rebuilds Book/Chapter records, generates thumbnails, handles rename and custom cover operations. Treats series `Book` rows as a pure cache: every scan **wipes all series rows and recreates them from each folder's `.mangashelf/`**. One folder in → one book out, every time — no reconciliation, no deduplication.
 
-- `scanRootFolder(modelContext:)` / `scanSecretFolder(modelContext:)` - Full library scan
-- `syncSeriesFromRoot(_:modelContext:)` - Syncs a single series by resolving the root bookmark
-- `renameBook(_:to:modelContext:)` - Updates book title
-- `setCustomCover(for:jpegData:modelContext:)` - Saves custom cover JPEG, evicts old cache entry, updates Book
-- `customCoverName(for:)` - Generates safe filename for custom covers
+- `scanRootFolder(modelContext:force:)` / `scanSecretFolder(modelContext:force:)` - Library scan. When `force == false` (default, used by `LibraryViewModel.quickRefresh`), each existing series row whose `folderSignature` still matches the on-disk folder is **skipped** — no chapter sync, no cover refresh, no `fileSize` calls. When `force == true` (Settings → Rescan, new folder pick), every folder is fully re-walked. Dedupe + "delete missing folder" logic runs unconditionally either way.
+- `syncSeriesFromRoot(_:modelContext:)` - Refreshes chapters and the custom cover cache for an already-loaded series row (used by `ChapterListView`). Also restamps `folderSignature` on success.
+- `renameBook(_:to:modelContext:)` - Updates book title and propagates it into the folder's `data.json`
+- `setCustomCover(for:jpegData:modelContext:)` - **`async throws`.** Writes the JPEG into `<folder>/.mangashelf/cover.jpg` first, then mirrors it into the app-side thumbnail cache for fast cell rendering.
 
-**Dependencies:** `FileSourceProtocol` (for fileSize), `ThumbnailService` (for thumbnail generation and page counts), `LocalFileService` (direct calls for bookmark resolution and thumbnail paths), `BookDataService` (restores portable data on series creation).
+**Dependencies:** `FileSourceProtocol` (for fileSize), `ThumbnailService` (for thumbnail generation and page counts), `LocalFileService` (direct calls for bookmark resolution and thumbnail paths), `BookDataService` (restores portable data on series creation; owns the in-folder cover write).
 
 ### ThumbnailService (singleton)
 
@@ -132,14 +133,18 @@ Conforms to `FileSourceProtocol` for testability abstraction.
 
 ### BookDataService (singleton)
 
-**Responsibility:** Reads/writes `.mangashelf/data.json` inside each series folder. Syncs notes, links, reading progress, chapter progress, and bookmarks to disk so data travels with the folder.
+**Responsibility:** Owns the per-series in-folder storage at `<series_folder>/.mangashelf/` — both `data.json` (all metadata) and `cover.jpg` (custom cover). Source of truth for all portable series state.
 
 - `save(book:)` - Resolves bookmark internally, writes data.json
 - `save(book:seriesFolderURL:)` - Writes data.json to a pre-resolved URL (used by ReaderViewModel)
 - `load(seriesFolderURL:)` - Reads and decodes data.json
+- `saveCoverImage(jpegData:seriesFolderURL:)` - Writes a custom cover into `<folder>/.mangashelf/cover.jpg`
 - `restoreIfNeeded(book:modelContext:)` - Merges disk data into SwiftData when SwiftData fields are empty (one-way merge on series open)
+- `migrateAppDataToFolders(modelContext:)` - One-time pass that writes existing app-side state (cover, dateAdded, custom title) into each series folder. Idempotent, gated by `StorageKey.folderDataMigratedToSeriesFolders`. Runs before the first scan via `LibraryViewModel.scanLibrary`.
 
-Data format: `BookSeriesData` Codable struct with `note`, `url`, `currentChapterIndex`, `lastReadDate`, `bookmarks` array, `chapterProgress` dictionary.
+Static path helpers: `seriesDataDirectory(in:)`, `coverImageURL(in:)`, `dataFileURL(in:)`, `hasCoverImage(in:)`.
+
+Data format: `BookSeriesData` Codable struct with `note`, `url`, `currentChapterIndex`, `lastReadDate`, `bookmarks` array, `chapterProgress` dictionary, `dateAdded`, and `title` (only when user has overridden the auto-derived value).
 
 ### FileSourceProtocol
 
@@ -147,19 +152,30 @@ Protocol abstraction over file operations (`resolveBookmark`, `fileExists`, `fil
 
 ## 5. Key Flows
 
+### Launch & Refresh Flow
+
+The library is rendered directly from SwiftData via `@Query`, so books appear instantly on launch — no overlay blocks the UI during reconciliation.
+
+1. `MangaShelfApp.init()` builds the `ModelContainer` and runs one-time thumbnail migration.
+2. `SplashScreenView` is overlaid on top of `LibraryView` (opacity 0). Splash min duration is ~0.65s, gated only by its animations.
+3. As soon as `LibraryView` enters the hierarchy its `.task` fires `LibraryViewModel.quickRefresh(modelContext:)` — this runs in parallel with the splash.
+4. `quickRefresh` calls `ImportService.scanRootFolder(force: false)` / `scanSecretFolder(force: false)`. The scan walks the root directory but skips `syncChapters` + `refreshCustomCover` for any series whose `folderSignature` (folder mtime + pdf count) still matches the row's last known value. On most launches this means almost no PDFKit / `fileSize` work happens.
+5. `quickRefresh` toggles `viewModel.isRefreshing` instead of `isLoading` — a small spinner appears in the toolbar; the library is fully interactive throughout.
+6. When the user returns to the app (scene becomes `.active`) the same `quickRefresh` re-runs, so external edits in Files.app are picked up.
+7. Settings → "Rescan Library" / "Rescan Secret Library" routes through `force: true`, ignoring signatures and re-walking everything. This path uses the full-screen blocking overlay (`isLoading`) because row counts may change visibly.
+
 ### Folder Import Flow
 
 1. User opens `SettingsView` and taps "Select Manga Folder"
 2. `fileImporter` presents a `UIDocumentPickerViewController` for `.folder`
 3. On selection, a security-scoped bookmark is saved to UserDefaults (`rootFolderBookmark`)
 4. The folder display name is saved to UserDefaults (`rootFolderName`)
-5. `ImportService.scanRootFolder()` is called:
+5. `SettingsView.rescan()` calls `ImportService.scanRootFolder(force: true)` (new folder bypasses signatures). `BookDataService.migrateAppDataToFolders` runs once across the app lifetime via `LibraryViewModel.quickRefresh` on first launch. The scan:
    a. Resolves the bookmark to a URL, refreshes if stale
    b. Enumerates root contents: subfolders with PDFs become series, loose PDFs become single books
-   c. For each series folder: upserts a `Book` (isSeries=true), creates/updates `Chapter` records, generates thumbnail from first PDF page
-   d. For each single PDF: upserts a `Book` (isSeries=false), generates thumbnail
-   e. Books no longer present on disk are marked `isAvailable = false`
-   f. On new series creation, checks for existing `.mangashelf/data.json` and restores portable data
+   c. **Deletes every existing series row** in the DB for this context (chapters + bookmarks cascade). Series state lives entirely in `.mangashelf/`, so nothing is lost.
+   d. For each series folder: `createSeries` builds a fresh `Book` row, restoring metadata + cover from `.mangashelf/`. Library now contains exactly one row per folder.
+   e. For each single PDF: upsert by filename (single PDFs have no folder, so their progress is preserved in the DB row directly)
 6. `modelContext.save()` persists all changes
 
 ### PDF Reading Flow
@@ -204,16 +220,19 @@ Protocol abstraction over file operations (`resolveBookmark`, `fileExists`, `fil
 
 1. From library: long-press context menu "Set Cover" opens PhotosPicker
 2. From art viewer: "Use as Cover Image" opens crop overlay
-3. Both paths call `ImportService.setCustomCover()`: saves JPEG to thumbnail dir, evicts old cache, sets `hasManualCover = true`, increments `coverVersion`
+3. Both paths call `ImportService.setCustomCover()` (async): writes the JPEG into `<folder>/.mangashelf/cover.jpg` via `BookDataService.saveCoverImage`, then mirrors it into the app-side thumbnail cache, evicts the old cache entry, sets `hasManualCover = true`, increments `coverVersion`
 4. `coverVersion` change triggers thumbnail reload in `BookCardView`/`BookRowView` via `.task(id:)`
+5. Because `cover.jpg` lives in the folder, the cover travels with the folder (renames, moves, cross-device copies) and is restored automatically on the next scan via `refreshCustomCover` / `createSeries`.
 
 ### Portable Series Data Flow
 
-1. Each series folder can contain `.mangashelf/data.json`
-2. On series creation (`ImportService.createSeries`): if data.json exists, its contents are restored into SwiftData
+1. Each series folder owns its persistent state under `.mangashelf/`:
+   - `data.json` — note, url, currentChapterIndex, lastReadDate, bookmarks, chapterProgress, dateAdded, custom title (only if user-overridden)
+   - `cover.jpg` — custom cover image (only if the user picked one)
+2. On series creation (`ImportService.createSeries`): if `data.json` exists, its contents seed the new `Book` row. If `cover.jpg` exists, it's mirrored into the thumbnail cache and `hasManualCover` is set to `true`.
 3. On series open (`ChapterListView.task`): `BookDataService.restoreIfNeeded()` merges disk data into SwiftData (only fills empty fields, doesn't overwrite)
-4. On every edit (note, link, bookmark, progress): both SwiftData and data.json are updated via `BookDataService.save()`
-5. This means series data travels with the folder if copied between devices
+4. On every edit (note, link, bookmark, progress, title, cover): both SwiftData and the folder are updated — `BookDataService.save()` for metadata, `BookDataService.saveCoverImage()` for the cover
+5. Renaming/moving a folder is now a no-op semantically: the next scan deletes the stale DB row, sees the "new" folder, and reads everything (cover, progress, bookmarks, notes, title, dateAdded) from `.mangashelf/`
 
 ### Progress Persistence Flow
 
@@ -272,7 +291,7 @@ MangaShelf/
 ## 7. Known Limitations & Technical Debt
 
 ### SwiftData Migration Constraints
-- `Book.filePath` and `Book.bookmarkData` are dead properties. They cannot be removed without adding a `VersionedSchema` migration, which is out of scope for a refactor-only pass. They are set during creation but never read.
+- `Book.filePath`, `Book.bookmarkData`, and `Book.isAvailable` are effectively dead properties. They cannot be removed without adding a `VersionedSchema` migration, which is out of scope for a refactor-only pass. `filePath`/`bookmarkData` are set during creation but never read; `isAvailable` is always `true` for live rows because missing books are deleted on scan.
 
 ### Rendering
 - `PDFPageView` uses raw `CALayer` rendering rather than `PDFKit`'s `PDFView`. This gives full control over memory and rendering but means zoom and text selection are not supported.
