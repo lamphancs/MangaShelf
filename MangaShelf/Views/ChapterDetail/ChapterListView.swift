@@ -98,7 +98,7 @@ struct ChapterListView: View {
             Task { await loadArtImages() }
         }) { item in
             ArtViewerOverlay(
-                artImages: artImages,
+                artImages: coverCarouselItems,
                 initialIndex: item.index,
                 onDeleteFile: { filename in
                     await deleteArtFile(filename: filename)
@@ -139,21 +139,21 @@ struct ChapterListView: View {
 
     // MARK: - Cover Header
 
-    private var coverCarouselImages: [UIImage] {
-        var images: [UIImage] = []
+    private var coverCarouselItems: [ArtItem] {
+        var items: [ArtItem] = []
         if let cover = coverImage {
-            images.append(cover)
+            items.append(ArtItem(id: "__cover__", image: cover, isCover: true))
         }
-        images.append(contentsOf: artImages.map(\.image))
-        return images
+        items.append(contentsOf: artImages)
+        return items
     }
 
     private var coverHeader: some View {
-        let images = coverCarouselImages
+        let items = coverCarouselItems
 
         return VStack(spacing: 0) {
-            if images.count > 1 {
-                let baseImage = images[0]
+            if items.count > 1 {
+                let baseImage = items[0].image
                 let aspect = baseImage.size.width / baseImage.size.height
 
                 Color.clear
@@ -161,10 +161,10 @@ struct ChapterListView: View {
                     .frame(maxHeight: maxCoverHeight)
                     .overlay {
                         TabView(selection: $coverDisplayIndex) {
-                            ForEach(Array(images.enumerated()), id: \.offset) { index, img in
+                            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                                 Color.clear
                                     .overlay {
-                                        Image(uiImage: img)
+                                        Image(uiImage: item.image)
                                             .resizable()
                                             .scaledToFill()
                                     }
@@ -180,13 +180,13 @@ struct ChapterListView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .shadow(color: (dominantColor ?? theme.accent).opacity(0.6), radius: 40, x: 0, y: 0)
                     .shadow(color: (dominantColor ?? theme.accent).opacity(0.3), radius: 80, x: 0, y: 0)
-            } else if let singleImage = images.first {
-                let aspect = singleImage.size.width / singleImage.size.height
+            } else if let singleItem = items.first {
+                let aspect = singleItem.image.size.width / singleItem.image.size.height
                 Color.clear
                     .aspectRatio(aspect, contentMode: .fit)
                     .frame(maxHeight: maxCoverHeight)
                     .overlay {
-                        Image(uiImage: singleImage)
+                        Image(uiImage: singleItem.image)
                             .resizable()
                             .scaledToFill()
                     }
@@ -217,7 +217,7 @@ struct ChapterListView: View {
         .padding(.horizontal, 40)
         .padding(.top, 8)
         .onChange(of: artImages.count) { _, _ in
-            let maxIndex = coverCarouselImages.count - 1
+            let maxIndex = coverCarouselItems.count - 1
             if coverDisplayIndex > maxIndex {
                 coverDisplayIndex = max(maxIndex, 0)
             }
@@ -225,14 +225,8 @@ struct ChapterListView: View {
     }
 
     private func handleCoverTap() {
-        guard !artImages.isEmpty else { return }
-        let artIndex: Int
-        if coverImage != nil {
-            artIndex = max(coverDisplayIndex - 1, 0)
-        } else {
-            artIndex = coverDisplayIndex
-        }
-        artViewerItem = ArtViewerItem(index: artIndex)
+        guard !coverCarouselItems.isEmpty else { return }
+        artViewerItem = ArtViewerItem(index: coverDisplayIndex)
     }
 
     // MARK: - Info Section
@@ -844,7 +838,8 @@ struct ChapterListView: View {
                     HStack(spacing: 8) {
                         ForEach(Array(artImages.enumerated()), id: \.element.id) { index, art in
                             Button {
-                                artViewerItem = ArtViewerItem(index: index)
+                                let offset = (coverImage != nil) ? 1 : 0
+                                artViewerItem = ArtViewerItem(index: index + offset)
                             } label: {
                                 Image(uiImage: art.image)
                                     .resizable()

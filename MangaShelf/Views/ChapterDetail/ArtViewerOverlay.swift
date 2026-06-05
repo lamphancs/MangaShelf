@@ -8,6 +8,7 @@ import SwiftUI
 struct ArtItem: Identifiable {
     let id: String
     let image: UIImage
+    var isCover: Bool = false
 }
 
 private struct ClearFullScreenBackground: UIViewRepresentable {
@@ -155,13 +156,17 @@ struct ArtViewerOverlay: View {
                     }
 
                     HStack {
+                        let isCoverCurrent = currentIndex >= 0 && currentIndex < artImages.count && artImages[currentIndex].isCover
+
                         Menu {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    showCropMode = true
+                            if !isCoverCurrent {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        showCropMode = true
+                                    }
+                                } label: {
+                                    Label("Use as Cover Image", systemImage: "book.closed")
                                 }
-                            } label: {
-                                Label("Use as Cover Image", systemImage: "book.closed")
                             }
 
                             if let onOpenInFolder {
@@ -181,14 +186,16 @@ struct ArtViewerOverlay: View {
 
                         Spacer()
 
-                        Button(role: .destructive) {
-                            Task { await deleteArt() }
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
-                                .background(.ultraThinMaterial, in: Circle())
+                        if !isCoverCurrent {
+                            Button(role: .destructive) {
+                                Task { await deleteArt() }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }
                         }
                     }
                     .padding(.horizontal, 20)
