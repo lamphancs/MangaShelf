@@ -123,7 +123,11 @@ struct PDFPageView: UIViewRepresentable {
             let y: CGFloat = page == 0 ? 0 : pageOffsets[page]
             scrollView?.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
             reportedPage = page
-            contentView?.updateCenter(page: page)
+            if let scrollView {
+                contentView?.updateViewport(
+                    CGRect(x: 0, y: y, width: scrollView.bounds.width, height: scrollView.bounds.height)
+                )
+            }
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -140,8 +144,11 @@ struct PDFPageView: UIViewRepresentable {
                 }
             }
 
-            contentView?.updateCenter(page: lo)
             reportedPage = lo
+
+            contentView?.updateViewport(
+                CGRect(x: 0, y: scrollView.contentOffset.y, width: scrollView.bounds.width, height: scrollView.bounds.height)
+            )
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
@@ -172,25 +179,52 @@ fileprivate class PDFContentView: UIView {
     var pdfDocument: PDFDocument?
     var pageRects: [(offset: CGFloat, height: CGFloat)] = []
     private var contentWidth: CGFloat = 0
-    private var pageLayers: [CALayer] = []
 
-    private var pageImages: [Int: CGImage] = [:]
-    private var inflightPages = Set<Int>()
+    /// Immutable snapshot of the tile layout, captured on the main thread and handed to the
+    /// render queue so the background renderer never races against `configure`/`clearContent`.
+    private struct TileLayout {
+        let pageIndex: [Int]
+        let frame: [CGRect]
+        let bandTop: [CGFloat]
+        let bandHeight: [CGFloat]
+        var count: Int { pageIndex.count }
+    }
+
+    // Tile model. Every PDF page is split into bounded-height vertical bands ("tiles") so no
+    // single texture ever exceeds the GPU limit — the root cause of the scroll stutter on tall
+    // webtoon-style pages (e.g. 430×14400pt). Only tiles near the viewport are rendered/kept.
+    private var tileLayers: [CALayer] = []
+    private var tileLayout = TileLayout(pageIndex: [], frame: [], bandTop: [], bandHeight: [])
+
+    private var tileImages: [Int: CGImage] = [:]
+    private var inflightTiles = Set<Int>()
     private var unfairLock = os_unfair_lock()
     private let renderQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "pdf.render"
-        queue.maxConcurrentOperationCount = 4
-        queue.qualityOfService = .userInitiated
+        // Fewer concurrent decodes + a QoS below the main (scroll) thread. Heavy PDF/JPEG
+        // decoding at .userInitiated across 4 cores starves the scroll runloop and causes
+        // micro-stutter; .utility lets scrolling win and keeps the frame rate steady.
+        queue.maxConcurrentOperationCount = 2
+        queue.qualityOfService = .utility
         return queue
     }()
     private let scheduleQueue = DispatchQueue(label: "pdf.schedule")
-    private var currentCenter: Int = 0
-    private var previousCenter: Int = 0
-    private let activeRadius = 4
+    /// Outstanding render operations keyed by tile index. Touched only on `scheduleQueue`,
+    /// so it needs no lock. Lets us cancel renders for tiles that scroll out of view during
+    /// a fling instead of decoding pages the user will never see.
+    private var inflightOps: [Int: Operation] = [:]
     private var generation: Int = 0
     private static let bgColor: CGColor = UIColor.black.cgColor
     private var cachedScreenScale: CGFloat = 0
+
+    /// Max height of a single tile, in content points. Keeps each rendered texture small
+    /// (≈1024pt × screenScale ≈ 3072px tall) — well under the GPU max texture size.
+    private let tileHeightPoints: CGFloat = 1024
+    /// How far beyond the viewport (in multiples of viewport height) tiles are kept warm.
+    private let overscanFactor: CGFloat = 1.5
+
+    private var lastScheduledTop: CGFloat = .greatestFiniteMagnitude
 
     func configure(document: PDFDocument, width: CGFloat) {
         generation += 1
@@ -199,14 +233,15 @@ fileprivate class PDFContentView: UIView {
         let scale = traitCollection.displayScale
         cachedScreenScale = scale > 0 ? scale : 2.0
 
-        pageLayers.forEach { $0.removeFromSuperlayer() }
-        pageLayers.removeAll()
+        renderQueue.cancelAllOperations()
+        scheduleQueue.async { [weak self] in self?.inflightOps.removeAll() }
+        tileLayers.forEach { $0.removeFromSuperlayer() }
+        tileLayers.removeAll()
         os_unfair_lock_lock(&unfairLock)
-        pageImages.removeAll()
-        inflightPages.removeAll()
+        tileImages.removeAll()
+        inflightTiles.removeAll()
         os_unfair_lock_unlock(&unfairLock)
-        currentCenter = 0
-        previousCenter = 0
+        lastScheduledTop = .greatestFiniteMagnitude
 
         let topInset: CGFloat = {
             let scene = UIApplication.shared.connectedScenes
@@ -218,80 +253,169 @@ fileprivate class PDFContentView: UIView {
         var offset = topInset
         pageRects = []
 
+        var tilePageIndex: [Int] = []
+        var tileFrames: [CGRect] = []
+        var tileBandTop: [CGFloat] = []
+        var tileBandHeight: [CGFloat] = []
+
         for i in 0..<document.pageCount {
             guard let page = document.page(at: i) else { continue }
             let pageRect = page.bounds(for: .mediaBox)
+            guard pageRect.width > 0 else { continue }
             let scale = width / pageRect.width
             let height = pageRect.height * scale
             pageRects.append((offset: offset, height: height))
 
-            let pageLayer = CALayer()
-            pageLayer.frame = CGRect(x: 0, y: offset, width: width, height: height)
-            pageLayer.contentsScale = cachedScreenScale
-            pageLayer.contentsGravity = .resize
-            pageLayer.backgroundColor = Self.bgColor
-            layer.addSublayer(pageLayer)
-            pageLayers.append(pageLayer)
+            // Split the page into vertical tiles.
+            var bandTop: CGFloat = 0
+            while bandTop < height {
+                let bandHeight = min(tileHeightPoints, height - bandTop)
+                let frame = CGRect(x: 0, y: offset + bandTop, width: width, height: bandHeight)
+
+                let tileLayer = CALayer()
+                tileLayer.frame = frame
+                tileLayer.contentsScale = cachedScreenScale
+                tileLayer.contentsGravity = .resize
+                tileLayer.backgroundColor = Self.bgColor
+                layer.addSublayer(tileLayer)
+
+                tileLayers.append(tileLayer)
+                tilePageIndex.append(i)
+                tileFrames.append(frame)
+                tileBandTop.append(bandTop)
+                tileBandHeight.append(bandHeight)
+
+                bandTop += bandHeight
+            }
 
             offset += height
         }
 
+        tileLayout = TileLayout(
+            pageIndex: tilePageIndex,
+            frame: tileFrames,
+            bandTop: tileBandTop,
+            bandHeight: tileBandHeight
+        )
+
         frame = CGRect(x: 0, y: 0, width: width, height: offset)
         backgroundColor = UIColor.black
 
-        scheduleRender(center: 0)
+        // Prime the first viewport so the top of the chapter is ready before the first scroll.
+        let viewportHeight = screenHeight()
+        scheduleRender(top: 0, bottom: viewportHeight * overscanFactor)
     }
 
     func clearContent() {
         generation += 1
         pdfDocument = nil
-        pageLayers.forEach { $0.removeFromSuperlayer() }
-        pageLayers.removeAll()
+        renderQueue.cancelAllOperations()
+        scheduleQueue.async { [weak self] in self?.inflightOps.removeAll() }
+        tileLayers.forEach { $0.removeFromSuperlayer() }
+        tileLayers.removeAll()
+        tileLayout = TileLayout(pageIndex: [], frame: [], bandTop: [], bandHeight: [])
         os_unfair_lock_lock(&unfairLock)
-        pageImages.removeAll()
-        inflightPages.removeAll()
+        tileImages.removeAll()
+        inflightTiles.removeAll()
         os_unfair_lock_unlock(&unfairLock)
         pageRects.removeAll()
+        lastScheduledTop = .greatestFiniteMagnitude
         frame = .zero
     }
 
-    func updateCenter(page: Int) {
-        guard page != currentCenter else { return }
-        previousCenter = currentCenter
-        currentCenter = page
-        scheduleRender(center: page)
+    /// Called on the main thread for every scroll event. Determines which tiles must be
+    /// rendered/kept for the given viewport and (throttled) schedules the work off-main.
+    func updateViewport(_ rect: CGRect) {
+        let overscan = max(rect.height, 1) * overscanFactor
+        let top = rect.minY - overscan
+        let bottom = rect.maxY + overscan
+
+        // Skip near-duplicate schedules; the serial render queue coalesces the rest.
+        if abs(top - lastScheduledTop) < tileHeightPoints * 0.5 { return }
+        lastScheduledTop = top
+
+        scheduleRender(top: top, bottom: bottom)
     }
 
     // MARK: - Rendering
 
-    private func scheduleRender(center: Int) {
+    private func screenHeight() -> CGFloat {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        return scene?.keyWindow?.bounds.height ?? 852
+    }
+
+    private func scheduleRender(top: CGFloat, bottom: CGFloat) {
+        let currentGen = generation
+        let layout = tileLayout
+        let rects = pageRects
+        let width = contentWidth
+        let screenScale = cachedScreenScale
         scheduleQueue.async { [weak self] in
-            self?.renderPages(around: center)
+            self?.renderTiles(
+                top: top,
+                bottom: bottom,
+                gen: currentGen,
+                layout: layout,
+                rects: rects,
+                width: width,
+                screenScale: screenScale
+            )
         }
     }
 
-    private func renderPages(around center: Int) {
-        guard let doc = pdfDocument else { return }
-        let count = pageRects.count
+    private func renderTiles(
+        top: CGFloat,
+        bottom: CGFloat,
+        gen: Int,
+        layout: TileLayout,
+        rects: [(offset: CGFloat, height: CGFloat)],
+        width: CGFloat,
+        screenScale: CGFloat
+    ) {
+        guard gen == generation, let doc = pdfDocument else { return }
+        let count = layout.count
         guard count > 0 else { return }
 
-        let scrollForward = center >= previousCenter
-        let behind = scrollForward ? activeRadius / 3 : activeRadius
-        let ahead = scrollForward ? activeRadius : activeRadius / 3
-        let lo = max(0, center - behind)
-        let hi = min(count - 1, center + ahead)
-        let desiredSet = Set(lo...hi)
-        let currentGen = generation
-        let width = contentWidth
-        let screenScale = cachedScreenScale
-        let rects = pageRects
+        // Tiles are contiguous and sorted by minY. Binary-search the first tile that
+        // intersects the range, then walk forward.
+        var lo = 0, hi = count - 1, firstIdx = count
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if layout.frame[mid].maxY > top {
+                firstIdx = mid
+                hi = mid - 1
+            } else {
+                lo = mid + 1
+            }
+        }
+
+        var desiredSet = Set<Int>()
+        var i = firstIdx
+        while i < count && layout.frame[i].minY < bottom {
+            desiredSet.insert(i)
+            i += 1
+        }
+
+        let currentGen = gen
+
+        // Drop finished ops, then cancel any still-running render whose tile has scrolled
+        // out of the desired range — this is what keeps a fast fling from backlogging the
+        // render queue with pages that are no longer on screen.
+        for (idx, op) in inflightOps where op.isFinished { inflightOps[idx] = nil }
+        for (idx, op) in inflightOps where !desiredSet.contains(idx) {
+            op.cancel()
+            inflightOps[idx] = nil
+            removeInflight(idx)
+        }
 
         os_unfair_lock_lock(&unfairLock)
-        let existing = Set(pageImages.keys)
-        let inflight = inflightPages
+        let existing = Set(tileImages.keys)
+        let inflight = inflightTiles
         let toEvict = existing.subtracting(desiredSet)
         for key in toEvict {
-            pageImages.removeValue(forKey: key)
+            tileImages.removeValue(forKey: key)
         }
         os_unfair_lock_unlock(&unfairLock)
 
@@ -300,40 +424,62 @@ fileprivate class PDFContentView: UIView {
                 guard let self else { return }
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
-                for key in toEvict where key < self.pageLayers.count {
-                    self.pageLayers[key].contents = nil
+                for key in toEvict where key < self.tileLayers.count {
+                    self.tileLayers[key].contents = nil
                 }
                 CATransaction.commit()
             }
         }
 
+        let viewportMid = (top + bottom) / 2
         let toRender = desiredSet
             .subtracting(existing)
             .subtracting(inflight)
-            .sorted { abs($0 - center) < abs($1 - center) }
+            .sorted { abs(layout.frame[$0].midY - viewportMid) < abs(layout.frame[$1].midY - viewportMid) }
 
         guard !toRender.isEmpty else { return }
 
         os_unfair_lock_lock(&unfairLock)
-        for i in toRender { inflightPages.insert(i) }
+        for i in toRender { inflightTiles.insert(i) }
         os_unfair_lock_unlock(&unfairLock)
 
-        for i in toRender {
-            renderQueue.addOperation { [weak self, weak doc] in
+        for tileIdx in toRender {
+            let operation = BlockOperation()
+            operation.addExecutionBlock { [weak self, weak doc, weak operation] in
                 autoreleasepool {
-                    guard let self, let doc, self.generation == currentGen else {
-                        self?.removeInflight(i)
+                    guard let self else { return }
+
+                    // Bail before the expensive draw if this tile was cancelled (scrolled
+                    // away) or belongs to a superseded chapter.
+                    guard operation?.isCancelled == false, let doc, self.generation == currentGen else {
+                        self.removeInflight(tileIdx)
                         return
                     }
-                    guard let page = doc.page(at: i), i < rects.count else {
-                        self.removeInflight(i)
+
+                    let pageIdx = layout.pageIndex[tileIdx]
+                    guard let page = doc.page(at: pageIdx), pageIdx < rects.count else {
+                        self.removeInflight(tileIdx)
                         return
                     }
 
                     let pageRect = page.bounds(for: .mediaBox)
+                    guard pageRect.width > 0 else {
+                        self.removeInflight(tileIdx)
+                        return
+                    }
                     let scale = width / pageRect.width
-                    let pixelW = Int(width * screenScale)
-                    let pixelH = Int(rects[i].height * screenScale)
+                    let bandTop = layout.bandTop[tileIdx]
+                    let bandHeight = layout.bandHeight[tileIdx]
+
+                    let pixelW = Int((width * screenScale).rounded())
+                    let pixelH = Int((bandHeight * screenScale).rounded())
+                    guard pixelW > 0, pixelH > 0 else {
+                        self.removeInflight(tileIdx)
+                        return
+                    }
+
+                    // Full page height in pixels; the band is carved out of this by shifting up.
+                    let fullPixelH = rects[pageIdx].height * screenScale
 
                     let format = UIGraphicsImageRendererFormat()
                     format.scale = 1
@@ -346,36 +492,44 @@ fileprivate class PDFContentView: UIView {
                         let cgContext = ctx.cgContext
                         cgContext.setFillColor(Self.bgColor)
                         cgContext.fill(CGRect(x: 0, y: 0, width: pixelW, height: pixelH))
-                        cgContext.translateBy(x: 0, y: CGFloat(pixelH))
-                        cgContext.scaleBy(x: scale * screenScale, y: -scale * screenScale)
+                        // Shift the full-page drawing up so this band lands at the image top.
+                        cgContext.translateBy(x: 0, y: -(bandTop * screenScale))
+                        cgContext.translateBy(x: 0, y: fullPixelH)
+                        cgContext.scaleBy(x: scale * screenScale, y: -(scale * screenScale))
                         page.draw(with: .mediaBox, to: cgContext)
                     }
 
-                    guard let cgImage = uiImage.cgImage, self.generation == currentGen else {
-                        self.removeInflight(i)
+                    // If the tile was cancelled or the chapter changed while drawing, drop the
+                    // result instead of caching/committing a page the user has scrolled past.
+                    guard let cgImage = uiImage.cgImage,
+                          operation?.isCancelled == false,
+                          self.generation == currentGen else {
+                        self.removeInflight(tileIdx)
                         return
                     }
 
                     os_unfair_lock_lock(&self.unfairLock)
-                    self.pageImages[i] = cgImage
-                    self.inflightPages.remove(i)
+                    self.tileImages[tileIdx] = cgImage
+                    self.inflightTiles.remove(tileIdx)
                     os_unfair_lock_unlock(&self.unfairLock)
 
                     DispatchQueue.main.async {
-                        guard self.generation == currentGen, i < self.pageLayers.count else { return }
+                        guard self.generation == currentGen, tileIdx < self.tileLayers.count else { return }
                         CATransaction.begin()
                         CATransaction.setDisableActions(true)
-                        self.pageLayers[i].contents = cgImage
+                        self.tileLayers[tileIdx].contents = cgImage
                         CATransaction.commit()
                     }
                 }
             }
+            inflightOps[tileIdx] = operation
+            renderQueue.addOperation(operation)
         }
     }
 
     private func removeInflight(_ index: Int) {
         os_unfair_lock_lock(&unfairLock)
-        inflightPages.remove(index)
+        inflightTiles.remove(index)
         os_unfair_lock_unlock(&unfairLock)
     }
 }
