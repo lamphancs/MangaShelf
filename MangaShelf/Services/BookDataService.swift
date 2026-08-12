@@ -14,6 +14,9 @@ struct BookSeriesData: Codable {
     var lastReadDate: Date?
     var bookmarks: [BookmarkEntry] = []
     var chapterProgress: [String: Int] = [:]
+    /// Exact scroll offset (content points) keyed by chapter filename, for pixel-accurate
+    /// reading-position restore across reinstalls.
+    var chapterOffsets: [String: Double] = [:]
     /// Cached PDF page count keyed by chapter filename. Lets `ImportService.createSeries`
     /// rebuild rows without reopening every PDF via PDFKit on every scan.
     var chapterPageCounts: [String: Int] = [:]
@@ -36,7 +39,7 @@ struct BookSeriesData: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case note, url, currentChapterIndex, lastReadDate, bookmarks
-        case chapterProgress, chapterPageCounts, dateAdded, title
+        case chapterProgress, chapterOffsets, chapterPageCounts, dateAdded, title
     }
 
     /// Hand-rolled decoder so older `.mangashelf/data.json` files (written before fields
@@ -52,6 +55,7 @@ struct BookSeriesData: Codable {
         lastReadDate = try c.decodeIfPresent(Date.self, forKey: .lastReadDate)
         bookmarks = try c.decodeIfPresent([BookmarkEntry].self, forKey: .bookmarks) ?? []
         chapterProgress = try c.decodeIfPresent([String: Int].self, forKey: .chapterProgress) ?? [:]
+        chapterOffsets = try c.decodeIfPresent([String: Double].self, forKey: .chapterOffsets) ?? [:]
         chapterPageCounts = try c.decodeIfPresent([String: Int].self, forKey: .chapterPageCounts) ?? [:]
         dateAdded = try c.decodeIfPresent(Date.self, forKey: .dateAdded)
         title = try c.decodeIfPresent(String.self, forKey: .title)
@@ -194,6 +198,11 @@ final class BookDataService {
                 chapter.lastReadPage = savedPage
                 changed = true
             }
+            if let savedOffset = seriesData.chapterOffsets[chapter.filename],
+               chapter.lastReadOffset == 0, savedOffset > 0 {
+                chapter.lastReadOffset = savedOffset
+                changed = true
+            }
         }
 
         if book.currentChapterIndex == 0, seriesData.currentChapterIndex > 0 {
@@ -307,6 +316,9 @@ final class BookDataService {
         for chapter in book.sortedChapters {
             if chapter.lastReadPage > 0 {
                 data.chapterProgress[chapter.filename] = chapter.lastReadPage
+            }
+            if chapter.lastReadOffset > 0 {
+                data.chapterOffsets[chapter.filename] = chapter.lastReadOffset
             }
             if chapter.totalPages > 0 {
                 data.chapterPageCounts[chapter.filename] = chapter.totalPages

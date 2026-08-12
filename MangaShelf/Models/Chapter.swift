@@ -16,6 +16,9 @@ final class Chapter {
     var sortOrder: Int
     var totalPages: Int
     var lastReadPage: Int
+    /// Exact vertical scroll offset (content points) when this chapter was last closed, for
+    /// pixel-accurate position restore. `0` = restore by page instead.
+    var lastReadOffset: Double = 0
     var book: Book?
 
     init(

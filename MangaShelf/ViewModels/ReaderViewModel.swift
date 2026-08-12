@@ -42,12 +42,30 @@ final class ReaderViewModel {
 
     var captureViewport: (() -> (UIImage, CGFloat)?)?
 
+    /// Exact scroll offset (content points) to restore when the reader opens, taken from the
+    /// last saved position of the initial chapter/book. `0` means fall back to page restore.
+    var initialOffset: CGFloat = 0
+
+    /// Reads the live `contentOffset.y` from the scroll view on demand (wired by `PDFPageView`).
+    var currentOffsetProvider: (() -> CGFloat)?
+
+    /// Scrolls (animated) to the top of the current chapter, calling the completion once the
+    /// top has finished rendering (wired by `PDFPageView`).
+    var scrollToTop: ((@escaping () -> Void) -> Void)?
+
+    /// True while the "go to top" button is waiting for the top of the chapter to render.
+    var isScrollingToTop = false
+
+    /// True while the reader is restoring a saved scroll position and its tiles are still loading.
+    var isRestoringPosition = false
+
     private var accessedURL: URL?
     private var folderURL: URL?
     private var hasSecurityAccess = false
     private var overlayHideTask: Task<Void, Never>?
-    private var saveTask: Task<Void, Never>?
     private var chapterLoadTask: Task<PDFDocument?, Never>?
+    private var topLoadingTimeoutTask: Task<Void, Never>?
+    private var restoreTimeoutTask: Task<Void, Never>?
 
     init(book: Book) {
         self.book = book
@@ -78,6 +96,7 @@ final class ReaderViewModel {
 
                 if let chapter = chapters[safe: chapterIdx] {
                     self.currentPage = min(chapter.lastReadPage, max(0, chapter.totalPages - 1))
+                    self.initialOffset = CGFloat(chapter.lastReadOffset)
                     self.pdfDocument = PDFDocument(url: chapter.pdfURL(folderURL: seriesFolder))
                 } else {
                     self.currentPage = 0
@@ -89,19 +108,24 @@ final class ReaderViewModel {
             self.sortedChapters = []
             self.currentChapterIndex = 0
             self.currentPage = book.lastReadPage
+            self.initialOffset = CGFloat(book.lastReadOffset)
 
             if let rootURL = resolvedRoot {
                 let pdfURL = rootURL.appendingPathComponent(book.filename)
                 self.pdfDocument = PDFDocument(url: pdfURL)
             }
         }
+
+        self.isRestoringPosition = self.initialOffset > 0
     }
 
     func cleanup() {
         chapterLoadTask?.cancel()
         chapterLoadTask = nil
-        saveTask?.cancel()
-        saveTask = nil
+        topLoadingTimeoutTask?.cancel()
+        topLoadingTimeoutTask = nil
+        restoreTimeoutTask?.cancel()
+        restoreTimeoutTask = nil
         if hasSecurityAccess, let url = accessedURL {
             url.stopAccessingSecurityScopedResource()
             hasSecurityAccess = false
@@ -126,8 +150,50 @@ final class ReaderViewModel {
     // MARK: - Page Navigation
 
     func updatePage(_ page: Int, modelContext: ModelContext) {
+        // Page position is kept in memory only while reading — no disk write here. A periodic
+        // save used to run 2s after each scroll stop, but its main-thread SwiftData + JSON
+        // write caused a stutter when resuming scroll. Progress is now persisted on reader
+        // dismiss/disappear, chapter change, and when the app enters the background.
         currentPage = page
-        debounceSave(modelContext: modelContext)
+    }
+
+    // MARK: - Scroll Actions
+
+    /// Triggered by the overlay's "go to top" button. Shows a spinner on the button until the
+    /// top of the chapter has rendered, with a timeout so it can never spin forever.
+    func goToTop() {
+        guard let scrollToTop else { return }
+        UIImpactFeedbackGenerator.impact(.medium)
+        isScrollingToTop = true
+        scrollToTop { [weak self] in
+            guard let self else { return }
+            self.topLoadingTimeoutTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.2)) { self.isScrollingToTop = false }
+        }
+        topLoadingTimeoutTask?.cancel()
+        topLoadingTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self, !Task.isCancelled, self.isScrollingToTop else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { self.isScrollingToTop = false }
+        }
+    }
+
+    /// Called by `PDFPageView` once the restored position's tiles have finished rendering.
+    func restoreDidComplete() {
+        restoreTimeoutTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.2)) { isRestoringPosition = false }
+    }
+
+    /// Safety net: clears the restore spinner after a few seconds even if the render-complete
+    /// callback never arrives (e.g. a page that fails to render).
+    func beginRestoreTimeout() {
+        guard isRestoringPosition else { return }
+        restoreTimeoutTask?.cancel()
+        restoreTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, !Task.isCancelled, self.isRestoringPosition else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { self.isRestoringPosition = false }
+        }
     }
 
     // MARK: - Chapter Navigation
@@ -153,6 +219,9 @@ final class ReaderViewModel {
 
         if let current = currentChapter {
             current.lastReadPage = currentPage
+            if let offset = currentOffsetProvider?() {
+                current.lastReadOffset = Double(offset)
+            }
         }
 
         pdfDocument = nil
@@ -185,13 +254,16 @@ final class ReaderViewModel {
     // MARK: - Progress
 
     func saveProgress(modelContext: ModelContext) {
+        let offset = currentOffsetProvider?()
         if book.isSeries {
             if let chapter = currentChapter {
                 chapter.lastReadPage = currentPage
+                if let offset { chapter.lastReadOffset = Double(offset) }
             }
             book.currentChapterIndex = currentChapterIndex
         } else {
             book.lastReadPage = currentPage
+            if let offset { book.lastReadOffset = Double(offset) }
         }
         book.lastReadDate = Date()
         try? modelContext.save()
@@ -256,14 +328,5 @@ final class ReaderViewModel {
     private func cancelOverlayHide() {
         overlayHideTask?.cancel()
         overlayHideTask = nil
-    }
-
-    private func debounceSave(modelContext: ModelContext) {
-        saveTask?.cancel()
-        saveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            saveProgress(modelContext: modelContext)
-        }
     }
 }

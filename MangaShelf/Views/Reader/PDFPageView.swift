@@ -12,9 +12,20 @@ struct PDFPageView: UIViewRepresentable {
 
     let pdfDocument: PDFDocument?
     @Binding var currentPage: Int
+    /// Exact vertical scroll offset (content points) to restore on first load. `0` falls back
+    /// to page-based restore (`currentPage`), which is what pre-offset saved data will have.
+    let initialOffset: CGFloat
     let onPageChange: (Int) -> Void
     let onTap: () -> Void
     var onCaptureReady: ((@escaping () -> (UIImage, CGFloat)?) -> Void)? = nil
+    /// Hands the parent a closure that reads the live `contentOffset.y` on demand, so progress
+    /// can be persisted at the exact scroll position without observing every scroll frame.
+    var onOffsetReady: ((@escaping () -> CGFloat) -> Void)? = nil
+    /// Hands the parent a `scrollToTop(completion:)` closure: it scrolls (animated) to the top
+    /// of the current chapter and calls `completion` once the top tiles have finished rendering.
+    var onScrollToTopReady: ((@escaping (@escaping () -> Void) -> Void) -> Void)? = nil
+    /// Called (main thread) once the restored initial position's tiles have finished rendering.
+    var onRestoreComplete: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> UIView {
         let scrollView = UIScrollView()
@@ -39,6 +50,16 @@ struct PDFPageView: UIViewRepresentable {
             return (image, max(0, scrollView.contentOffset.y))
         })
 
+        onOffsetReady?({ [weak scrollView] in
+            max(0, scrollView?.contentOffset.y ?? 0)
+        })
+
+        onScrollToTopReady?({ [weak coordinator = context.coordinator] completion in
+            guard let coordinator else { completion(); return }
+            coordinator.scrollToTop()
+            coordinator.awaitTargetRendered(completion)
+        })
+
         let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap))
         doubleTap.numberOfTapsRequired = 2
         scrollView.addGestureRecognizer(doubleTap)
@@ -52,8 +73,17 @@ struct PDFPageView: UIViewRepresentable {
                 sceneWidth = scene?.coordinateSpace.bounds.width ?? 393
             }
             context.coordinator.loadDocument(doc, width: sceneWidth)
+            let restoreOffset = initialOffset
+            let restorePage = currentPage
+            let onRestore = onRestoreComplete
             DispatchQueue.main.async {
-                context.coordinator.scrollToPage(currentPage, animated: false)
+                if restoreOffset > 0 {
+                    context.coordinator.scrollToOffset(restoreOffset)
+                    context.coordinator.awaitTargetRendered { onRestore?() }
+                } else {
+                    context.coordinator.scrollToPage(restorePage, animated: false)
+                    onRestore?()
+                }
             }
         }
 
@@ -96,6 +126,9 @@ struct PDFPageView: UIViewRepresentable {
         var reportedPage = 0
         private var pageOffsets: [CGFloat] = []
         private var pageCount = 0
+        /// The viewport rect of the most recent deliberate jump (restore / go-to-top), used to
+        /// wait for that exact position to finish rendering rather than any scrolled-through one.
+        private var pendingTargetRect: CGRect = .zero
 
         init(_ parent: PDFPageView) {
             self.parent = parent
@@ -130,10 +163,40 @@ struct PDFPageView: UIViewRepresentable {
             }
         }
 
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard pageCount > 0 else { return }
-            let y = scrollView.contentOffset.y + scrollView.bounds.height * 0.3
+        /// Restores an exact scroll position (content points), clamped to the scrollable range,
+        /// and syncs `reportedPage`/`currentPage` so the overlay and the page-restore fallback
+        /// in `updateUIView` agree and don't snap back to a page top.
+        func scrollToOffset(_ y: CGFloat) {
+            guard let scrollView else { return }
+            let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+            let clamped = min(max(0, y), maxY)
+            scrollView.setContentOffset(CGPoint(x: 0, y: clamped), animated: false)
+            reportedPage = pageIndex(forViewportY: clamped + scrollView.bounds.height * 0.3)
+            parent.currentPage = reportedPage
+            let target = CGRect(x: 0, y: clamped, width: scrollView.bounds.width, height: scrollView.bounds.height)
+            pendingTargetRect = target
+            contentView?.updateViewport(target)
+        }
 
+        /// Scrolls (animated) to the very top of the current chapter and syncs the reported
+        /// page so the overlay stays in agreement. Driven by the overlay's "go to top" button.
+        func scrollToTop() {
+            scrollToPage(0, animated: true)
+            parent.currentPage = 0
+            if let scrollView {
+                pendingTargetRect = CGRect(x: 0, y: 0, width: scrollView.bounds.width, height: scrollView.bounds.height)
+            }
+        }
+
+        /// Fires `completion` (on the main thread) once every tile intersecting the last
+        /// deliberate target viewport has been rendered — or immediately if already rendered.
+        func awaitTargetRendered(_ completion: @escaping () -> Void) {
+            contentView?.awaitViewportRendered(pendingTargetRect, completion)
+        }
+
+        /// Index of the page whose top is at or above `y` (a point in content space).
+        private func pageIndex(forViewportY y: CGFloat) -> Int {
+            guard pageCount > 0 else { return 0 }
             var lo = 0, hi = pageCount - 1
             while lo < hi {
                 let mid = (lo + hi + 1) / 2
@@ -143,8 +206,13 @@ struct PDFPageView: UIViewRepresentable {
                     hi = mid - 1
                 }
             }
+            return lo
+        }
 
-            reportedPage = lo
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard pageCount > 0 else { return }
+            let y = scrollView.contentOffset.y + scrollView.bounds.height * 0.3
+            reportedPage = pageIndex(forViewportY: y)
 
             contentView?.updateViewport(
                 CGRect(x: 0, y: scrollView.contentOffset.y, width: scrollView.bounds.width, height: scrollView.bounds.height)
@@ -219,12 +287,19 @@ fileprivate class PDFContentView: UIView {
     private var cachedScreenScale: CGFloat = 0
 
     /// Max height of a single tile, in content points. Keeps each rendered texture small
-    /// (≈1024pt × screenScale ≈ 3072px tall) — well under the GPU max texture size.
-    private let tileHeightPoints: CGFloat = 1024
+    /// (≈384pt × screenScale ≈ 1152px tall). Smaller tiles mean smaller CGImages committed to
+    /// layer.contents, so each GPU texture upload is cheap and doesn't hitch the scroll runloop.
+    /// At 384pt an opaque tile is ~5.3MB at 3× vs ~14MB at 1024pt.
+    private let tileHeightPoints: CGFloat = 384
     /// How far beyond the viewport (in multiples of viewport height) tiles are kept warm.
     private let overscanFactor: CGFloat = 1.5
 
     private var lastScheduledTop: CGFloat = .greatestFiniteMagnitude
+
+    /// One-shot completion + its target viewport, used to notify when a deliberate jump's tiles
+    /// have all rendered. Touched only on the main thread.
+    private var renderTargetRect: CGRect = .zero
+    private var renderCompletion: (() -> Void)?
 
     func configure(document: PDFDocument, width: CGFloat) {
         generation += 1
@@ -335,6 +410,56 @@ fileprivate class PDFContentView: UIView {
         lastScheduledTop = top
 
         scheduleRender(top: top, bottom: bottom)
+    }
+
+    // MARK: - Render Completion
+
+    /// Calls `completion` once every tile intersecting `rect` (the visible viewport, no
+    /// overscan) has a rendered image — or synchronously right now if that's already true.
+    func awaitViewportRendered(_ rect: CGRect, _ completion: @escaping () -> Void) {
+        if isRectFullyRendered(rect) {
+            completion()
+            return
+        }
+        renderTargetRect = rect
+        renderCompletion = completion
+    }
+
+    /// Whether every tile that intersects `rect` currently has a cached image.
+    private func isRectFullyRendered(_ rect: CGRect) -> Bool {
+        let layout = tileLayout
+        let count = layout.count
+        guard count > 0 else { return true }
+
+        var lo = 0, hi = count - 1, firstIdx = count
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if layout.frame[mid].maxY > rect.minY {
+                firstIdx = mid
+                hi = mid - 1
+            } else {
+                lo = mid + 1
+            }
+        }
+
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
+        var i = firstIdx
+        while i < count && layout.frame[i].minY < rect.maxY {
+            if tileImages[i] == nil { return false }
+            i += 1
+        }
+        return true
+    }
+
+    /// Fires a pending `awaitViewportRendered` completion if its target is now fully rendered.
+    /// Called on the main thread after each tile commit.
+    private func checkRenderCompletion() {
+        guard let completion = renderCompletion else { return }
+        if isRectFullyRendered(renderTargetRect) {
+            renderCompletion = nil
+            completion()
+        }
     }
 
     // MARK: - Rendering
@@ -519,6 +644,7 @@ fileprivate class PDFContentView: UIView {
                         CATransaction.setDisableActions(true)
                         self.tileLayers[tileIdx].contents = cgImage
                         CATransaction.commit()
+                        self.checkRenderCompletion()
                     }
                 }
             }

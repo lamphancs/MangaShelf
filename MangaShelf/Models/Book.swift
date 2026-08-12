@@ -30,6 +30,10 @@ final class Book {
     /// Last page the user was reading (0-indexed) — used for single-PDF books
     var lastReadPage: Int
 
+    /// Exact vertical scroll offset (content points) when the reader was last closed, for
+    /// pixel-accurate position restore on single-PDF books. `0` = restore by page instead.
+    var lastReadOffset: Double = 0
+
     /// Total number of pages in the PDF (or sum of all chapters for series)
     var totalPages: Int
 

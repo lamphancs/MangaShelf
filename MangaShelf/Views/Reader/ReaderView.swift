@@ -12,6 +12,7 @@ struct ReaderView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(ThemeManager.self) private var theme
 
     let book: Book
@@ -32,6 +33,7 @@ struct ReaderView: View {
             PDFPageView(
                 pdfDocument: viewModel.pdfDocument,
                 currentPage: $viewModel.currentPage,
+                initialOffset: viewModel.initialOffset,
                 onPageChange: { newPage in
                     viewModel.updatePage(newPage, modelContext: modelContext)
                 },
@@ -40,6 +42,15 @@ struct ReaderView: View {
                 },
                 onCaptureReady: { captureFunc in
                     viewModel.captureViewport = captureFunc
+                },
+                onOffsetReady: { provider in
+                    viewModel.currentOffsetProvider = provider
+                },
+                onScrollToTopReady: { action in
+                    viewModel.scrollToTop = action
+                },
+                onRestoreComplete: {
+                    viewModel.restoreDidComplete()
                 }
             )
             .ignoresSafeArea()
@@ -89,6 +100,13 @@ struct ReaderView: View {
                     .transition(.opacity.combined(with: .scale))
             }
 
+            if viewModel.isRestoringPosition {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(.white)
+                    .transition(.opacity)
+            }
+
             ReaderOverlayView(
                 title: book.title,
                 chapterTitle: viewModel.currentChapter?.displayName,
@@ -116,7 +134,7 @@ struct ReaderView: View {
             )
 
             if book.isSeries {
-                VStack {
+                VStack(spacing: 16) {
                     Spacer()
                     Spacer()
                     Spacer()
@@ -132,6 +150,27 @@ struct ReaderView: View {
                             .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
                     }
                     .accessibilityLabel("Capture page")
+
+                    Button {
+                        viewModel.goToTop()
+                    } label: {
+                        Group {
+                            if viewModel.isScrollingToTop {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "arrow.up.to.line")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    }
+                    .disabled(viewModel.isScrollingToTop)
+                    .accessibilityLabel("Go to top")
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -147,6 +186,7 @@ struct ReaderView: View {
         }
         .statusBar(hidden: !viewModel.isOverlayVisible)
         .onAppear {
+            viewModel.beginRestoreTimeout()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 withAnimation {
                     viewModel.isOverlayVisible = false
@@ -156,6 +196,14 @@ struct ReaderView: View {
         .onDisappear {
             viewModel.saveProgress(modelContext: modelContext)
             viewModel.cleanup()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Reading position is only kept in memory while scrolling (no periodic save, to
+            // avoid a scroll stutter). Persist it when the app is backgrounded so progress
+            // survives being terminated while the reader is still open.
+            if newPhase == .background {
+                viewModel.saveProgress(modelContext: modelContext)
+            }
         }
         .preferredColorScheme(.dark)
     }
