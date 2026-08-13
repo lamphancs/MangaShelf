@@ -286,7 +286,7 @@ final class ImportService {
             totalSizeAll += (try? fileService.fileSize(at: pdfFile)) ?? 0
         }
 
-        let title = seriesData?.title ?? defaultTitle(from: folderName)
+        let title = seriesData?.title ?? folderName.cleanedMangaTitle()
         let dateAdded = seriesData?.dateAdded ?? Date()
 
         let book = Book(
@@ -355,7 +355,7 @@ final class ImportService {
 
     private func createSingleBook(from pdfURL: URL, isSecret: Bool = false, modelContext: ModelContext) async throws {
         let filename = pdfURL.lastPathComponent
-        let title = defaultTitle(from: filename, removeExtension: true)
+        let title = filename.cleanedMangaTitle(removeExtension: true)
         let pageCount = thumbnailService.getPageCount(for: pdfURL)
         let fileSize = (try? fileService.fileSize(at: pdfURL)) ?? 0
 
@@ -536,29 +536,6 @@ final class ImportService {
 
     /// Filename used inside `Application Support/Thumbnails/` for a book's cached cover.
     private func thumbnailCacheName(for book: Book) -> String {
-        let identifier = book.folderName ?? book.filename
-        let safeId = identifier
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
-        return "custom_\(safeId).jpg"
-    }
-
-    private func defaultTitle(from filename: String, removeExtension: Bool = false) -> String {
-        var title = filename
-
-        if removeExtension, let lastDot = title.lastIndex(of: ".") {
-            title = String(title[..<lastDot])
-        }
-
-        title = title.replacingOccurrences(of: "_", with: " ")
-        title = title.replacingOccurrences(of: "-", with: " ")
-        title = title.trimmingCharacters(in: .whitespaces)
-        title = title.replacingOccurrences(of: "  ", with: " ")
-
-        if title == title.lowercased() || title == title.uppercased() {
-            title = title.capitalized
-        }
-
-        return title.isEmpty ? "Untitled" : title
+        LocalFileService.customCoverFilename(for: book.folderName ?? book.filename)
     }
 }

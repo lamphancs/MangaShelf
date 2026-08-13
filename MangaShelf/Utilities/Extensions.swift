@@ -20,6 +20,32 @@ extension Color {
     static let tertiaryText = Color(white: 0.5)
 }
 
+// MARK: - String Title Cleaning
+
+extension String {
+    /// Human-readable title derived from a filename or folder name: optionally strips the
+    /// file extension, turns `_`/`-` into spaces, collapses doubled spaces, and capitalizes
+    /// input that is entirely lower- or upper-case. Returns "Untitled" when empty.
+    func cleanedMangaTitle(removeExtension: Bool = false) -> String {
+        var title = self
+
+        if removeExtension, let lastDot = title.lastIndex(of: ".") {
+            title = String(title[..<lastDot])
+        }
+
+        title = title.replacingOccurrences(of: "_", with: " ")
+        title = title.replacingOccurrences(of: "-", with: " ")
+        title = title.trimmingCharacters(in: .whitespaces)
+        title = title.replacingOccurrences(of: "  ", with: " ")
+
+        if title == title.lowercased() || title == title.uppercased() {
+            title = title.capitalized
+        }
+
+        return title.isEmpty ? "Untitled" : title
+    }
+}
+
 // MARK: - Chapter Extensions
 
 extension Chapter {

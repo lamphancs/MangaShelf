@@ -284,6 +284,10 @@ fileprivate class PDFContentView: UIView {
     private var inflightOps: [Int: Operation] = [:]
     private var generation: Int = 0
     private static let bgColor: CGColor = UIColor.black.cgColor
+    /// Placeholder shown for a tile that hasn't finished rendering yet. A neutral
+    /// gray instead of black so scrolling into not-yet-rendered pages reads as
+    /// "loading" rather than a jarring black gap against light manga pages.
+    private static let placeholderColor: CGColor = UIColor(white: 0.25, alpha: 1).cgColor
     private var cachedScreenScale: CGFloat = 0
 
     /// Max height of a single tile, in content points. Keeps each rendered texture small
@@ -351,7 +355,7 @@ fileprivate class PDFContentView: UIView {
                 tileLayer.frame = frame
                 tileLayer.contentsScale = cachedScreenScale
                 tileLayer.contentsGravity = .resize
-                tileLayer.backgroundColor = Self.bgColor
+                tileLayer.backgroundColor = Self.placeholderColor
                 layer.addSublayer(tileLayer)
 
                 tileLayers.append(tileLayer)

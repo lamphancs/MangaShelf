@@ -8,37 +8,22 @@ import SwiftUI
 struct BookRowView: View {
 
     @Environment(ThemeManager.self) private var theme
-    @Environment(\.displayScale) private var displayScale
 
     let book: Book
     let onTap: () -> Void
     let onRename: () -> Void
     let onSetCover: () -> Void
 
-    @State private var thumbnailImage: UIImage?
-    @State private var isLoadingThumbnail = true
-
     var body: some View {
         HStack(spacing: 14) {
-            Rectangle()
-                .fill(theme.cardBackground)
-                .frame(width: 60, height: 80)
-                .overlay {
-                    if let image = thumbnailImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else if isLoadingThumbnail {
-                        ProgressView()
-                            .tint(theme.accent)
-                    } else {
-                        Image(systemName: "book.closed.fill")
-                            .font(.title3)
-                            .foregroundStyle(Color.tertiaryText)
-                    }
-                }
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            BookCoverThumbnail(
+                book: book,
+                displaySize: Self.displaySize,
+                placeholderFont: .title3,
+                width: 60,
+                height: 80,
+                cornerRadius: 8
+            )
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(book.title)
@@ -53,7 +38,7 @@ struct BookRowView: View {
                     singleBookLabel
                 }
 
-                progressBar(value: book.readingProgress)
+                BookProgressBar(value: book.readingProgress)
             }
 
             Spacer(minLength: 0)
@@ -83,9 +68,6 @@ struct BookRowView: View {
                 Label("Rename", systemImage: "pencil")
             }
         }
-        .task(id: "\(book.thumbnailPath ?? "")-\(book.coverVersion)") {
-            await loadThumbnail()
-        }
     }
 
     // MARK: - Labels
@@ -111,39 +93,7 @@ struct BookRowView: View {
         .foregroundColor(.tertiaryText)
     }
 
-    private func progressBar(value: Double) -> some View {
-        Capsule()
-            .fill(Color.white.opacity(0.15))
-            .frame(height: 3)
-            .overlay(alignment: .leading) {
-                Capsule()
-                    .fill(theme.accent)
-                    .frame(width: value > 0 ? nil : 0, height: 3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .scaleEffect(x: value, anchor: .leading)
-            }
-            .clipped()
-    }
-
     private static let displaySize = CGSize(width: 60, height: 80)
-
-    private func loadThumbnail() async {
-        guard let thumbnailURL = book.thumbnailURL else {
-            isLoadingThumbnail = false
-            return
-        }
-
-        let scale = displayScale
-        let targetSize = CGSize(
-            width: Self.displaySize.width * scale,
-            height: Self.displaySize.height * scale
-        )
-
-        if let image = await ThumbnailService.shared.cachedImage(for: thumbnailURL, targetSize: targetSize) {
-            thumbnailImage = image
-        }
-        isLoadingThumbnail = false
-    }
 }
 
 #Preview {

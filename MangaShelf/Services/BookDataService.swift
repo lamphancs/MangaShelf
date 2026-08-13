@@ -5,7 +5,6 @@
 
 import Foundation
 import SwiftData
-import UIKit
 
 struct BookSeriesData: Codable {
     var note: String?
@@ -269,7 +268,7 @@ final class BookDataService {
             await save(book: book, seriesFolderURL: seriesFolder)
 
             if book.hasManualCover {
-                let legacyCoverFilename = legacyCustomCoverName(for: folderName)
+                let legacyCoverFilename = LocalFileService.customCoverFilename(for: folderName)
                 let legacyCoverURL = thumbnailDir.appendingPathComponent(legacyCoverFilename)
                 let folderCoverURL = Self.coverImageURL(in: seriesFolder)
                 let dataDir = Self.seriesDataDirectory(in: seriesFolder)
@@ -287,13 +286,6 @@ final class BookDataService {
         }
     }
 
-    private func legacyCustomCoverName(for identifier: String) -> String {
-        let safeId = identifier
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
-        return "custom_\(safeId).jpg"
-    }
-
     // MARK: - Private
 
     @MainActor
@@ -307,7 +299,7 @@ final class BookDataService {
         data.dateAdded = book.dateAdded
 
         if let folderName = book.folderName {
-            let autoTitle = autoDerivedTitle(from: folderName)
+            let autoTitle = folderName.cleanedMangaTitle()
             if book.title != autoTitle {
                 data.title = book.title
             }
@@ -334,17 +326,5 @@ final class BookDataService {
         }
 
         return data
-    }
-
-    private func autoDerivedTitle(from folderName: String) -> String {
-        var title = folderName
-        title = title.replacingOccurrences(of: "_", with: " ")
-        title = title.replacingOccurrences(of: "-", with: " ")
-        title = title.trimmingCharacters(in: .whitespaces)
-        title = title.replacingOccurrences(of: "  ", with: " ")
-        if title == title.lowercased() || title == title.uppercased() {
-            title = title.capitalized
-        }
-        return title.isEmpty ? "Untitled" : title
     }
 }

@@ -79,6 +79,15 @@ final class LocalFileService: FileSourceProtocol {
         thumbnailsDirectory.appendingPathComponent(filename)
     }
 
+    /// Filename used inside `Application Support/Thumbnails/` for a book's cached custom cover.
+    /// Sanitizes the identifier (folder or file name) so it is safe as a single path component.
+    static func customCoverFilename(for identifier: String) -> String {
+        let safeId = identifier
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        return "custom_\(safeId).jpg"
+    }
+
 }
 
 // MARK: - Error Types

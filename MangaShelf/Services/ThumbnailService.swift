@@ -17,7 +17,7 @@ final class ThumbnailService {
     private let fileService = LocalFileService.shared
 
     /// Standard thumbnail size for book covers
-    private let thumbnailSize = CGSize(width: 400, height: 600)
+    private let thumbnailSize = Layout.coverSize
 
     private let imageCache = NSCache<NSString, UIImage>()
 

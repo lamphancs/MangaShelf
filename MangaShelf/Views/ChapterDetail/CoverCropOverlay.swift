@@ -17,7 +17,6 @@ struct CoverCropOverlay: View {
 
     private let coverAspectRatio: CGFloat = 2.0 / 3.0
     private let imageScale: CGFloat = 0.8
-    private static let standardCoverSize = CGSize(width: 400, height: 600)
 
     var body: some View {
         GeometryReader { geometry in
@@ -299,7 +298,7 @@ struct CoverCropOverlay: View {
 
         let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
 
-        let outputSize = Self.standardCoverSize
+        let outputSize = Layout.coverSize
         let renderer = UIGraphicsImageRenderer(size: outputSize)
         return renderer.image { _ in
             let drawRect = CGRect(

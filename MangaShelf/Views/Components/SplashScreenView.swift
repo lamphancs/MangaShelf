@@ -9,6 +9,14 @@ struct SplashScreenView: View {
     @State private var titleOpacity: Double = 0
     @State private var titleOffset: CGFloat = 20
 
+    // Animation timing. The splash stays on screen until every intro
+    // animation has fully played, plus a short readable hold, before
+    // handing off to the library.
+    private let iconDuration: Double = 0.35
+    private let titleDelay: Double = 0.15
+    private let titleDuration: Double = 0.3
+    private let holdDuration: Double = 0.5
+
     var body: some View {
         ZStack {
             Color.black
@@ -44,17 +52,19 @@ struct SplashScreenView: View {
             }
         }
         .task {
-            withAnimation(.easeOut(duration: 0.35)) {
+            withAnimation(.easeOut(duration: iconDuration)) {
                 iconScale = 1.0
                 iconOpacity = 1.0
             }
-            withAnimation(.easeOut(duration: 0.3).delay(0.15)) {
+            withAnimation(.easeOut(duration: titleDuration).delay(titleDelay)) {
                 titleOpacity = 1.0
                 titleOffset = 0
             }
-            // Library renders from SwiftData immediately; reconciliation runs silently
-            // in the background. Splash duration is now purely a UX minimum, not a wait.
-            try? await Task.sleep(for: .seconds(0.65))
+            // Wait for the full intro animation to complete (the title finishes
+            // last, at titleDelay + titleDuration) plus a short hold so the
+            // library only appears once the splash has played out entirely.
+            let animationDuration = max(iconDuration, titleDelay + titleDuration)
+            try? await Task.sleep(for: .seconds(animationDuration + holdDuration))
             onFinished()
         }
     }
