@@ -19,6 +19,9 @@ struct ReaderView: View {
 
     @State private var viewModel: ReaderViewModel
     @State private var showCaptureFlash = false
+    @State private var showBookmarkEditor = false
+    @State private var bookmarkNote = ""
+    @State private var bookmarkColor: BookmarkColor = .red
 
     init(book: Book) {
         self.book = book
@@ -139,6 +142,29 @@ struct ReaderView: View {
                     Spacer()
                     Spacer()
                     Button {
+                        guard viewModel.canBookmarkCurrentChapter else { return }
+                        if viewModel.currentBookmark != nil {
+                            viewModel.removeCurrentBookmark(modelContext: modelContext)
+                        } else {
+                            bookmarkNote = ""
+                            bookmarkColor = .red
+                            viewModel.beginBookmarkEditing()
+                            showBookmarkEditor = true
+                        }
+                    } label: {
+                        Image(systemName: viewModel.currentBookmark == nil ? "bookmark" : "bookmark.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(viewModel.currentBookmark?.bookmarkColor.color ?? .white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    }
+                    .disabled(!viewModel.canBookmarkCurrentChapter)
+                    .opacity(viewModel.canBookmarkCurrentChapter ? 1 : 0.3)
+                    .accessibilityLabel(viewModel.currentBookmark == nil ? "Add Bookmark" : "Remove Bookmark")
+
+                    Button {
                         captureScreenshot()
                     } label: {
                         Image(systemName: "camera.fill")
@@ -183,6 +209,19 @@ struct ReaderView: View {
                 .ignoresSafeArea()
                 .opacity(showCaptureFlash ? 0.6 : 0)
                 .allowsHitTesting(false)
+        }
+        .sheet(isPresented: $showBookmarkEditor, onDismiss: {
+            viewModel.endBookmarkEditing()
+        }) {
+            BookmarkEditorSheet(
+                title: "Add Bookmark",
+                chapterTitle: viewModel.currentChapter?.displayName,
+                bookmarkNote: $bookmarkNote,
+                bookmarkColor: $bookmarkColor,
+                onSave: {
+                    viewModel.saveBookmark(note: bookmarkNote, color: bookmarkColor, modelContext: modelContext)
+                }
+            )
         }
         .statusBar(hidden: !viewModel.isOverlayVisible)
         .onAppear {

@@ -602,67 +602,13 @@ struct ChapterListView: View {
     }
 
     private var addBookmarkSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Color") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 36))], spacing: 12) {
-                        ForEach(BookmarkColor.allCases, id: \.rawValue) { color in
-                            Circle()
-                                .fill(color.color)
-                                .frame(width: 32, height: 32)
-                                .overlay {
-                                    if bookmarkColor == color {
-                                        Image(systemName: "checkmark")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.white)
-                                    }
-                                }
-                                .onTapGesture {
-                                    bookmarkColor = color
-                                }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section("Note (optional)") {
-                    TextField("e.g. Fight scene, Plot twist...", text: $bookmarkNote)
-                }
-
-                if let idx = bookmarkChapterIndex,
-                   let chapter = book.sortedChapters[safe: idx] {
-                    Section {
-                        Text(chapter.displayName)
-                            .foregroundColor(.secondaryText)
-                    } header: {
-                        Text("Chapter")
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.libraryBackground)
-            .navigationTitle("Add Bookmark")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
-                        showAddBookmark = false
-                    }
-                    .foregroundColor(.secondaryText)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        saveBookmark()
-                        showAddBookmark = false
-                    }
-                    .fontWeight(.semibold)
-                    .foregroundColor(theme.accent)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-        .preferredColorScheme(.dark)
+        BookmarkEditorSheet(
+            title: "Add Bookmark",
+            chapterTitle: bookmarkChapterIndex.flatMap { book.sortedChapters[safe: $0]?.displayName },
+            bookmarkNote: $bookmarkNote,
+            bookmarkColor: $bookmarkColor,
+            onSave: saveBookmark
+        )
     }
 
     private var editSeriesURLSheet: some View {

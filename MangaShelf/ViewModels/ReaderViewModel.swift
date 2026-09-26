@@ -147,6 +147,55 @@ final class ReaderViewModel {
         }
     }
 
+    // MARK: - Bookmarks
+
+    var currentBookmark: Bookmark? {
+        book.bookmarks?.first { $0.chapterIndex == currentChapterIndex }
+    }
+
+    var canBookmarkCurrentChapter: Bool {
+        book.isSeries && currentChapter != nil && pdfDocument != nil && !isLoadingChapter
+    }
+
+    func beginBookmarkEditing() {
+        cancelOverlayHide()
+    }
+
+    func endBookmarkEditing() {
+        if isOverlayVisible { scheduleOverlayHide() }
+    }
+
+    func removeCurrentBookmark(modelContext: ModelContext) {
+        guard canBookmarkCurrentChapter, let bookmark = currentBookmark else { return }
+        UIImpactFeedbackGenerator.impact(.medium)
+        // Update the inverse relationship immediately; deletion must not depend on a disk
+        // save before the button (or a subsequent tap) sees the new bookmark state.
+        book.bookmarks?.removeAll { $0.id == bookmark.id }
+        modelContext.delete(bookmark)
+        // Flush at reader lifecycle boundaries, just like reading position. A synchronous
+        // SwiftData save plus a full series snapshot here stalls the tap/scroll interaction.
+        if isOverlayVisible { scheduleOverlayHide() }
+    }
+
+    func saveBookmark(note: String, color: BookmarkColor, modelContext: ModelContext) {
+        guard canBookmarkCurrentChapter else { return }
+
+        if let bookmark = currentBookmark {
+            bookmark.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            bookmark.colorName = color.rawValue
+        } else {
+            let bookmark = Bookmark(
+                chapterIndex: currentChapterIndex,
+                note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                colorName: color.rawValue
+            )
+            bookmark.book = book
+            modelContext.insert(bookmark)
+        }
+        // Persist with progress on chapter change, reader dismissal, or backgrounding.
+        UIImpactFeedbackGenerator.impact(.medium)
+    }
+
     // MARK: - Page Navigation
 
     func updatePage(_ page: Int, modelContext: ModelContext) {
@@ -217,12 +266,9 @@ final class ReaderViewModel {
         guard let chapter = sortedChapters[safe: index],
               let folder = folderURL else { return }
 
-        if let current = currentChapter {
-            current.lastReadPage = currentPage
-            if let offset = currentOffsetProvider?() {
-                current.lastReadOffset = Double(offset)
-            }
-        }
+        // Flush pending bookmark changes to both SwiftData and portable series metadata
+        // along with the outgoing chapter's position before loading the next chapter.
+        saveProgress(modelContext: modelContext)
 
         pdfDocument = nil
         currentPage = 0

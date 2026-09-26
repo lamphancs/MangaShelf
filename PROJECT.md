@@ -193,6 +193,12 @@ Protocol over `resolveBookmark` / `fileExists` / `fileSize`. Only conformer is `
 2. `goToNextChapter` / `goToPreviousChapter` / `goToChapter(index:)` funnel into `ReaderViewModel.navigateToChapter(index:)`.
 3. It saves the current chapter's `lastReadPage`/`lastReadOffset`, nils `pdfDocument`, sets `isLoadingChapter`, loads the new PDF on a detached task, then updates `currentChapterIndex`, `pdfDocument`, `book.currentChapterIndex`, `lastReadDate`, and saves.
 
+### Reader bookmarks
+- Double-tap the reader to show its overlay, then tap the bookmark button above the camera button (series only).
+- `BookmarkEditorSheet` shares the color/note form with `ChapterListView`. Tapping an unbookmarked chapter opens the form; tapping an existing bookmark removes it immediately.
+- `ReaderViewModel.saveBookmark` and `removeCurrentBookmark` update in-memory models immediately without explicitly saving on the tap path. `saveProgress` flushes changes to SwiftData and the series `.mangashelf/data.json` on chapter change, reader dismissal, or backgrounding. Bookmarks remain chapter-level; no schema change is required.
+- The bookmark button is disabled while a chapter loads or its PDF is unavailable. Overlay auto-hide pauses while the editor is open and resumes on dismissal.
+
 ### Series URL / note
 1. `ChapterListView` info box: URL row (open link-actions sheet: Safari / Chrome / Copy; pencil to edit) and note row (TextEditor sheet).
 2. On save: SwiftData updated → `BookDataService.save()` writes `data.json`.
