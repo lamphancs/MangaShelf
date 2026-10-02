@@ -43,6 +43,8 @@ struct WebPageCaptureView: View {
                     if (model.isLoading && !model.canCapture && !model.isVerificationRequired) || model.isCapturing || isExporting {
                         VStack(spacing: 12) {
                             ProgressView()
+                            Text(model.chapterTitle)
+                                .font(.headline)
                             Text(isExporting ? "Preparing PDF…" : model.status)
                                 .font(.subheadline)
                             if model.isCapturing {
@@ -93,7 +95,7 @@ struct WebPageCaptureView: View {
                 }
             }
             .background(theme.libraryBackground)
-            .navigationTitle(model.document == nil ? (model.currentURL?.host ?? url.host ?? "Web Page") : "Full Page Capture")
+            .navigationTitle(model.document == nil ? (model.currentURL?.host ?? url.host ?? "Web Page") : model.chapterTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -194,7 +196,7 @@ struct WebPageCaptureView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding()
+        .padding([.top, .horizontal])
         .disabled(isExporting)
         .onChange(of: crop) { _, _ in saved = false; savedDescription = nil }
     }

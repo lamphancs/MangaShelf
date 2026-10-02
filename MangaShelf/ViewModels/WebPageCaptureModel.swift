@@ -26,6 +26,14 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var requestedURL: URL?
     private var automaticCaptureNavigation: WKNavigation?
 
+    var chapterTitle: String {
+        if isCapturing || document != nil { return suggestedFilename }
+        return CaptureFileName.chapterSuggestion(
+            url: isLoading ? (requestedURL ?? currentURL) : currentURL,
+            title: isLoading ? nil : webView.title
+        )
+    }
+
     init(isPrivate: Bool = true) {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
