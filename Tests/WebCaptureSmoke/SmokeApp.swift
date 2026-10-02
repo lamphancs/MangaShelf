@@ -356,7 +356,7 @@ struct CaptureSmokeView: View {
         check(true, "Late WebKit callback after timeout is ignored safely")
 
         let base = URL(string: ProcessInfo.processInfo.environment["CAPTURE_SMOKE_URL"]!)!
-        for mode in ["broken", "stalled", "deferred"] {
+        for mode in ["broken", "stalled", "deferred", "retained", "ignored", "placeholder"] {
             model.returnToPage()
             model.load(URL(string: "?images=\(mode)", relativeTo: base)!.absoluteURL)
             try await Task.sleep(for: .milliseconds(300))
@@ -387,6 +387,8 @@ struct CaptureSmokeView: View {
                     check(color[0] < 20 && color[1] > 230 && color[2] > 230,
                           "Recovered lazy image is present in captured PDF")
                 }
+            } else if mode == "retained" || mode == "ignored" {
+                check(model.captureWarning == nil, "No false warning for \(mode) images")
             } else {
                 check(model.captureWarning != nil, "\(mode) image warning shown instead of silently claiming completeness")
             }

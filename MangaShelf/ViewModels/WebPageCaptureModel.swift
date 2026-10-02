@@ -225,7 +225,6 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
             }
             do {
                 if loadEntirePage { try await preparePage() }
-                else { try await inspectImages(waitForLoading: false) }
                 try Task.checkCancellation()
                 status = "Capturing full page…"
                 webView.scrollView.setContentOffset(.zero, animated: false)
@@ -236,6 +235,10 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                     throw WebCaptureError.invalidDocument
                 }
                 configuration.rect = CGRect(origin: .zero, size: size)
+                // Freeze diagnostics immediately before the PDF request. Later browser
+                // loads cannot repair pixels already missing from the captured PDF.
+                try await inspectImages(waitForLoading: false)
+                status = "Capturing full page…"
                 let data = try await WebCaptureRequest<Data>().run(timeout: .seconds(45)) { completion in
                     self.webView.createPDF(configuration: configuration, completionHandler: completion)
                 }
@@ -333,12 +336,31 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                     let failed = 0;
                     images.forEach((image, index) => {
                         const rect = image.getBoundingClientRect();
-                        if (rect.width <= 0 || rect.height <= 0) return;
+                        // Include offscreen chapter pages, but not hidden elements or
+                        // tracking pixels which cannot contribute useful PDF content.
+                        if (rect.width <= 0 || rect.height <= 0 ||
+                            (rect.width <= 1 && rect.height <= 1)) return;
+                        if (getComputedStyle(image).visibility !== 'visible') return;
+                        for (let node = image; node; node = node.parentElement) {
+                            const style = getComputedStyle(node);
+                            if (style.display === 'none' || Number(style.opacity) === 0 ||
+                                style.contentVisibility === 'hidden') return;
+                        }
                         const lazy = ['data-src', 'data-original', 'data-lazy-src']
                             .map(key => image.getAttribute(key)).find(Boolean);
-                        const source = image.currentSrc || image.src;
-                        const deferred = lazy && (!source || (source.startsWith('data:') && source !== lazy) ||
-                            image.classList.contains('lazyload'));
+                        const source = image.currentSrc || image.getAttribute('src') || '';
+                        const absolute = value => {
+                            try { return new URL(value, document.baseURI).href; }
+                            catch { return value; }
+                        };
+                        const selectedLazySource = lazy && source && absolute(source) === absolute(lazy);
+                        const hasLazySource = lazy || image.getAttribute('data-srcset');
+                        // Classes/data attributes often remain after loading. Trust the
+                        // selected, decoded resource; a retained class is not a request.
+                        const placeholder = source.startsWith('data:') ||
+                            (image.naturalWidth === 1 && image.naturalHeight === 1);
+                        const deferred = hasLazySource && (!source ||
+                            (!selectedLazySource && placeholder && !image.getAttribute('srcset')));
                         const broken = source && image.complete && image.naturalWidth === 0 && !deferred;
                         if (broken) failed++;
                         if (deferred || !image.complete || broken || (!source && image.getAttribute('data-srcset'))) {
@@ -394,12 +416,11 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
             let fontsPending = (state["fontsPending"] as? NSNumber)?.boolValue ?? false
             if !waitForLoading || (pending == 0 && !fontsPending) || Date() >= deadline {
                 var warnings: [String] = []
-                if failed > 0 { warnings.append("\(failed) image(s) could not be decoded or loaded by the website.") }
-                if pending > 0 { warnings.append("\(pending) image(s) are still loading.") }
-                if fontsPending { warnings.append("Some web fonts are still loading.") }
-                if !warnings.isEmpty {
-                    captureWarning = warnings.joined(separator: " ") + " Check the preview before saving, or return to the page and retry."
-                }
+                if failed > 0 { warnings.append("\(failed) visible page image(s) reported a load error at capture time.") }
+                if pending > 0 { warnings.append("\(pending) visible page image(s) were not confirmed ready at capture time.") }
+                if fontsPending { warnings.append("Some web fonts were still loading at capture time.") }
+                captureWarning = warnings.isEmpty ? nil : warnings.joined(separator: " ") +
+                    " This may include site graphics outside the chapter. Check the PDF preview before saving."
                 // A broken WebP or a stalled tracking image must not block the
                 // entire PDF. Keep the failure visible instead of claiming completeness.
                 return

@@ -9,7 +9,7 @@
 
 <script>
 const mode = new URLSearchParams(location.search).get('images');
-if (mode) {
+if (mode === 'broken' || mode === 'stalled') {
     const image = document.createElement('img');
     image.width = 120;
     image.height = 120;
@@ -21,7 +21,6 @@ if (mode) {
 
 <script>
 if (mode === 'deferred') {
-    document.querySelector('section img').remove();
     const image = document.createElement('img');
     image.width = 120;
     image.height = 120;
@@ -37,5 +36,41 @@ if (mode === 'deferred') {
             }, 700);
         }
     }).observe(image);
+}
+</script>
+
+<script>
+const cyan = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="cyan"/></svg>');
+if (mode === 'retained') {
+    const image = new Image(120, 120);
+    image.className = 'lazyload';
+    image.dataset.src = cyan;
+    image.src = cyan;
+    document.querySelectorAll('section')[2].append(image);
+    const responsive = new Image(120, 120);
+    responsive.className = 'lazyload';
+    responsive.dataset.src = 'unused-fallback.png';
+    responsive.dataset.srcset = cyan + ' 1x';
+    responsive.srcset = responsive.dataset.srcset;
+    document.querySelector('section').append(responsive);
+}
+if (mode === 'ignored') {
+    for (const style of ['visibility:hidden', 'opacity:0', 'display:none']) {
+        const wrapper = document.createElement('div');
+        wrapper.style = style;
+        const image = new Image(120, 120);
+        image.src = 'broken.webp';
+        wrapper.append(image);
+        document.querySelector('section').append(wrapper);
+    }
+    const tracking = new Image(1, 1);
+    tracking.src = 'broken.webp';
+    document.querySelector('section').append(tracking);
+}
+if (mode === 'placeholder') {
+    const image = new Image(120, 120);
+    image.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+    image.dataset.src = cyan;
+    document.querySelectorAll('section')[2].append(image);
 }
 </script>
