@@ -96,6 +96,24 @@ struct CaptureSmokeView: View {
         do {
             try await Task.sleep(for: .milliseconds(500))
             browsingChecks.append("\(model.document == nil && !model.isCapturing ? "PASS" : "FAIL"): Opening link only browses; no automatic capture")
+            let nextChapter = try await model.findNextChapterURL()
+            browsingChecks.append("\(nextChapter?.query == "chapter=2" ? "PASS" : "FAIL"): Detect explicit next-chapter link")
+            _ = try await model.webView.evaluateJavaScript("const duplicateNext = document.createElement('a'); duplicateNext.id = 'ambiguous-next'; duplicateNext.href = '?chapter=3'; duplicateNext.textContent = 'Next chapter'; document.body.append(duplicateNext)")
+            let ambiguousNext = try await model.findNextChapterURL()
+            browsingChecks.append("\(ambiguousNext == nil ? "PASS" : "FAIL"): Ambiguous chapter links do not guess a destination")
+            _ = try await model.webView.evaluateJavaScript("document.querySelector('#ambiguous-next').remove()")
+            _ = try await model.webView.evaluateJavaScript("document.querySelector('#next').textContent = '›'; document.querySelector('#next').className = 'button next-chapter primary'")
+            let iconNext = try await model.findNextChapterURL()
+            browsingChecks.append("\(iconNext == nextChapter ? "PASS" : "FAIL"): Icon-only chapter link recognized by class")
+            _ = try await model.webView.evaluateJavaScript("document.querySelector('#next').textContent = 'Next chapter'; document.querySelector('#next').className = ''")
+            model.nextChapterURL = nextChapter
+            let advanced = model.goToNextChapter()
+            try await waitForPage(query: "chapter=2")
+            browsingChecks.append("\(advanced && model.document == nil && !model.isCapturing ? "PASS" : "FAIL"): Next chapter opens for browsing without automatic capture")
+            let absentNext = try await model.findNextChapterURL()
+            browsingChecks.append("\(absentNext == nil ? "PASS" : "FAIL"): Current chapter is not reused as next chapter")
+            model.goBack()
+            try await waitForPage(query: nil)
             let pageBeforePopup = model.currentURL
             browsingChecks.append("\(!model.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically ? "PASS" : "FAIL"): Automatic JavaScript windows disabled")
             // Allow the request through WebKit's preference to exercise the delegate guard too.
@@ -185,6 +203,14 @@ struct CaptureSmokeView: View {
             func check(_ condition: Bool, _ label: String) {
                 checks.append("\(condition ? "PASS" : "FAIL"): \(label)")
             }
+            let initialCrop = document.defaultCaptureCrop(viewportHeight: 800)
+            check(abs(initialCrop.height * document.size.height - 1000) < 2 && initialCrop.minY == 0,
+                  "Default crop removes five viewports from bottom only")
+            check(document.defaultCaptureCrop(viewportHeight: 6000).height == 1,
+                  "Short page default crop preserves the full page")
+            check(document.defaultCaptureCrop(viewportHeight: 3000).height == 0.6,
+                  "Default crop retains at least one viewport")
+            check(model.nextChapterURL == nil, "Capture freezes next-chapter availability for the captured page")
             check(abs(document.size.height - 5000) < 2, "Full document height = \(document.size.height), viewport = \(model.webView.bounds.height)")
             let top = try document.render(crop: CGRect(x: 0, y: 0, width: 1, height: 0.2))
             let bottom = try document.render(crop: CGRect(x: 0, y: 0.8, width: 1, height: 0.2))

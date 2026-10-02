@@ -6,6 +6,8 @@ import WebKit
 final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
     var document: WebCaptureDocument?
+    var defaultCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var nextChapterURL: URL?
     var isLoading = true
     var canCapture = false
     var isVerificationRequired = false
@@ -57,6 +59,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
         self.navigation = navigation
         cancelCapture()
         isLoading = true
+        nextChapterURL = nil
         isVerificationRequired = false
         canCapture = false
         status = "Loading page…"
@@ -137,6 +140,48 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
         return nil
     }
 
+    func findNextChapterURL() async throws -> URL? {
+        let value = try await WebCaptureRequest<Any?>().run(timeout: .seconds(5)) { completion in
+            self.webView.evaluateJavaScript(#"""
+                (() => {
+                    const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase().replace(/\s+/g, ' ').trim();
+                    const candidates = Array.from(document.querySelectorAll('a[href], link[rel~="next"][href]'))
+                        .filter(a => !a.matches('[aria-disabled="true"], [disabled], .disabled'))
+                        .map(a => {
+                            let url;
+                            try { url = new URL(a.href, document.baseURI); } catch { return null; }
+                            if (!['http:', 'https:'].includes(url.protocol) || url.origin !== location.origin ||
+                                url.pathname + url.search === location.pathname + location.search) return null;
+                            const labels = [a.textContent, a.getAttribute('aria-label'), a.title].filter(Boolean).map(normalize);
+                            const chapterLabel = labels.some(t => /^(next\s+(chapter|chap)|chuong\s+(tiep|sau)|chap\s+(tiep|sau))\b/.test(t));
+                            const relNext = a.rel.split(/\s+/).includes('next');
+                            const identifier = /(^|[\s_-])(next[-_]?(chapter|chap)|(chapter|chap)[-_]?next)([\s_-]|$)/i.test(a.id + ' ' + a.className);
+                            const score = chapterLabel ? 3 : relNext ? 2 : identifier ? 1 : 0;
+                            return score ? {url: url.href, score} : null;
+                        }).filter(Boolean).sort((a, b) => b.score - a.score);
+                    if (!candidates.length) return null;
+                    const best = candidates.filter(a => a.score === candidates[0].score);
+                    return new Set(best.map(a => a.url)).size === 1 ? best[0].url : null;
+                })()
+                """#) { result, error in
+                    if let error { completion(.failure(error)) }
+                    else { completion(.success(result)) }
+                }
+        }
+        try Task.checkCancellation()
+        return (value as? String).flatMap(URL.init(string:))
+    }
+
+    @discardableResult
+    func goToNextChapter() -> Bool {
+        guard let nextChapterURL else { return false }
+        returnToPage()
+        self.nextChapterURL = nil
+        load(nextChapterURL)
+        return true
+    }
+
     func capture(loadEntirePage: Bool) {
         guard canCapture, !isCapturing else { return }
         suggestedFilename = CaptureFileName.chapterSuggestion(url: webView.url, title: webView.title)
@@ -177,6 +222,9 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try WebCaptureDocument(data: data)
                 }.value
+                try Task.checkCancellation()
+                defaultCrop = result.defaultCaptureCrop(viewportHeight: webView.bounds.height)
+                nextChapterURL = try? await findNextChapterURL()
                 try Task.checkCancellation()
                 document = result
             } catch is CancellationError {

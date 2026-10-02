@@ -103,11 +103,7 @@ struct WebPageCaptureView: View {
                     if model.document != nil {
                         Button("Back to Page") {
                             model.returnToPage()
-                            crop = CGRect(x: 0, y: 0, width: 1, height: 1)
-                            saved = false
-                            savedDescription = nil
-                            filenameInput = ""
-                            overview = true
+                            resetPreview()
                         }
                         .disabled(isExporting)
                     }
@@ -117,6 +113,12 @@ struct WebPageCaptureView: View {
         .tint(theme.accent)
         .preferredColorScheme(.dark)
         .task { model.load(url) }
+        .onChange(of: model.document != nil) { _, ready in
+            if ready {
+                resetPreview()
+                crop = model.defaultCrop
+            }
+        }
         .onDisappear {
             model.close()
             exportTask?.cancel()
@@ -155,7 +157,7 @@ struct WebPageCaptureView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            Text("Drag the corners to crop. Scroll in Detail to reach any part of the page.")
+            Text("The default crop skips five screenfuls at the bottom. Drag the corners to adjust, or choose Full Page.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -182,6 +184,18 @@ struct WebPageCaptureView: View {
                     .disabled(saved)
                 }
             }
+            if book.isSeries {
+                Button {
+                    if model.goToNextChapter() { resetPreview() }
+                } label: {
+                    Label("Go to next chapter", systemImage: "arrow.right.to.line")
+                }
+                .disabled(model.nextChapterURL == nil)
+                if model.nextChapterURL == nil {
+                    Text("No next-chapter link found. Use Back to Page to navigate manually.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if let savedDescription {
                 Text(savedDescription).font(.caption).foregroundStyle(.secondary)
             }
@@ -192,6 +206,14 @@ struct WebPageCaptureView: View {
         .padding()
         .disabled(isExporting)
         .onChange(of: crop) { _, _ in saved = false; savedDescription = nil }
+    }
+
+    private func resetPreview() {
+        crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+        saved = false
+        savedDescription = nil
+        filenameInput = ""
+        overview = true
     }
 
     private func requestExport(saveToSeries: Bool) {

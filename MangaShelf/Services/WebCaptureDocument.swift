@@ -36,6 +36,15 @@ nonisolated struct WebCaptureDocument: Sendable {
         self.pageRects = rects
     }
 
+    /// Trim five browser viewports from the bottom, retaining at least one on short pages.
+    func defaultCaptureCrop(viewportHeight: CGFloat) -> CGRect {
+        guard viewportHeight.isFinite, viewportHeight > 0 else {
+            return CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+        let retainedHeight = min(size.height, max(viewportHeight, size.height - 5 * viewportHeight))
+        return CGRect(x: 0, y: 0, width: 1, height: retainedHeight / size.height)
+    }
+
     /// Full export is byte-for-byte WebKit output. A crop is written as PDF pages
     /// covering its vertical intersections, without flattening them into a bitmap.
     func pdfData(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> Data {

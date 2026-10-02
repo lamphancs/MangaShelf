@@ -35,3 +35,5 @@ Long web-page regression: `CAPTURE_TEST_ONLY=long bash Tests/WebCaptureSmoke/run
 Image recovery regression: the standard suite includes an image with no initial source whose site loader needs 700 ms of visibility. It checks that the targeted second pass loads it, clears the warning, and includes its cyan pixels in the captured PDF. Broken and stalled images retain explicit warnings; cancellation remains supported.
 
 Popup regression: the standard suite checks automatic-window preferences, scripted popup rejection even with that preference temporarily enabled, and target-blank chapter-link navigation.
+
+Next-chapter/default-crop checks cover explicit link detection, ambiguous and self-link rejection, opening the next chapter without automatic capture, and five-viewport bottom trimming with short-page safeguards. Manual UI check: save successfully and stay on the preview; press Go to next chapter to navigate. Verify the bottom button reaches the lower crop edge in both Overview and Detail, including after adjusting the crop; Full Page restores the whole selection.

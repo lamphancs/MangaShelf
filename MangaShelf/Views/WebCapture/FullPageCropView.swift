@@ -50,12 +50,16 @@ struct FullPageCropView: View {
                     }
                     .accessibilityLabel("Go to top")
                     Button {
-                        scrollPosition.scrollTo(edge: .bottom)
+                        // Keep the lower crop handles visible above the viewport edge.
+                        let cropBottom = canvasTop + crop.maxY * size.height
+                        let maxOffset = max(0, size.height + 48 - geometry.size.height)
+                        let offset = min(maxOffset, max(0, cropBottom - geometry.size.height + 80))
+                        scrollPosition.scrollTo(y: offset)
                     } label: {
                         Image(systemName: "arrow.down.to.line")
                             .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Go to bottom")
+                    .accessibilityLabel("Go to crop bottom")
                 }
                 .font(.system(size: 18, weight: .semibold))
                 .buttonStyle(.plain)
