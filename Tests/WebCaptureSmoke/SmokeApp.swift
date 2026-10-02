@@ -271,6 +271,14 @@ struct CaptureSmokeView: View {
             let book = Book(title: "Fixture", filename: "Fixture", filePath: "", totalPages: 1,
                             isSeries: true, folderName: folder.lastPathComponent)
             context.insert(book)
+            let legacy = try JSONDecoder().decode(BookSeriesData.self, from: Data(#"{"url":"https://example.com/series","note":"Legacy note"}"#.utf8))
+            check(legacy.url == "https://example.com/series" && legacy.latestChapterURL == nil && legacy.latestChapterNumber == nil,
+                  "Legacy series metadata preserves original link and defaults new chapter fields")
+            book.seriesURL = legacy.url
+            book.latestChapterURL = "https://example.com/series/chapter-42.5"
+            book.latestChapterNumber = "42.5"
+            check(BookLinkKind.webURL(book.latestChapterURL!) != nil && BookLinkKind.webURL("javascript:alert(1)") == nil && BookLinkKind.webURL("https://") == nil,
+                  "Link editor accepts web links and rejects invalid/non-web URLs")
             let original = Chapter(filename: "Z Existing.pdf", sortOrder: 0, totalPages: 1, lastReadPage: 0)
             original.lastReadOffset = 123
             original.book = book
@@ -280,7 +288,24 @@ struct CaptureSmokeView: View {
             context.insert(bookmark)
             try fullPDF.write(to: folder.appendingPathComponent(original.filename))
             try context.save()
-            let savedURL = try await ImportService().saveCapturedChapter(bottomPDF, for: book, filename: "Chapter 42", seriesFolderURL: folder, modelContext: context)
+            let savedURL = try await ImportService().saveCapturedChapter(bottomPDF, for: book, filename: "Chapter 42", seriesFolderURL: folder, sourceURL: URL(string: "https://example.com/series/chapter-43.5"), chapterTitle: "Chapter 99", modelContext: context)
+            let metadata = await BookDataService.shared.load(seriesFolderURL: folder)
+            check(metadata?.url == book.seriesURL && metadata?.latestChapterURL == book.latestChapterURL && metadata?.latestChapterNumber == "43.5" && book.latestChapterURL == "https://example.com/series/chapter-43.5",
+                  "Saving a captured chapter updates its URL and number in portable metadata while preserving the series link")
+            do {
+                _ = try await ImportService().saveCapturedChapter(Data(), for: book, seriesFolderURL: folder,
+                    sourceURL: URL(string: "https://example.com/chapter-999"), modelContext: context)
+                check(false, "Invalid PDF save must fail")
+            } catch {
+                check(book.latestChapterURL == "https://example.com/series/chapter-43.5" && book.latestChapterNumber == "43.5",
+                      "Failed PDF save leaves latest chapter link unchanged")
+            }
+            book.latestChapterURL = nil
+            book.latestChapterNumber = nil
+            await BookDataService.shared.save(book: book, seriesFolderURL: folder)
+            let removedMetadata = await BookDataService.shared.load(seriesFolderURL: folder)
+            check(removedMetadata != nil && removedMetadata?.latestChapterURL == nil && removedMetadata?.latestChapterNumber == nil && removedMetadata?.url == legacy.url,
+                  "Removing latest chapter persists without removing the series link")
             check(savedURL.lastPathComponent == "Chapter 42.pdf", "User-supplied filename used for saved chapter")
             check(book.sortedChapters.count == 2 && book.totalPages == 2, "Saved capture is imported as a chapter immediately")
             check(book.sortedChapters[book.currentChapterIndex].filename == original.filename && original.lastReadOffset == 123,

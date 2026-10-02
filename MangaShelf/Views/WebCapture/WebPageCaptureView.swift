@@ -10,6 +10,7 @@ struct WebPageCaptureView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(ThemeManager.self) private var theme
     @State private var model: WebPageCaptureModel
+    @ScaledMetric(relativeTo: .body) private var exportButtonHeight = 56
     @State private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var overview = true
     @State private var isExporting = false
@@ -22,6 +23,14 @@ struct WebPageCaptureView: View {
     @State private var pendingSaveToSeries = true
     @State private var savedDescription: String?
     @State private var showSaveSuccess = false
+    @State private var sharedLink: SharedBookLink?
+
+    private struct SharedBookLink: Identifiable {
+        let id = UUID()
+        let kind: BookLinkKind
+        let url: URL
+        let title: String?
+    }
 
     init(url: URL, book: Book) {
         self.url = url
@@ -64,34 +73,20 @@ struct WebPageCaptureView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal)
                     }
-                    HStack(spacing: 20) {
-                        Button { model.goBack() } label: {
-                            Image(systemName: "chevron.left")
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            browserNavigationButtons
+                            browserCaptureButton
                         }
-                        .accessibilityLabel("Back")
-                        .disabled(!model.canGoBack || model.isCapturing)
-                        Button { model.goForward() } label: {
-                            Image(systemName: "chevron.right")
+                        VStack(spacing: 12) {
+                            browserNavigationButtons
+                            browserCaptureButton
                         }
-                        .accessibilityLabel("Forward")
-                        .disabled(!model.canGoForward || model.isCapturing)
-                        Button { model.reload() } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .accessibilityLabel("Reload current page")
-                        .disabled(model.isCapturing)
-                        Button { openURL(model.currentURL ?? url) } label: {
-                            Image(systemName: "safari")
-                        }
-                        .accessibilityLabel("Open in Browser")
-                        .disabled(model.isCapturing)
-                        Spacer()
-                        Button { model.capture(loadEntirePage: true) } label: {
-                            Label("Capture", systemImage: "camera")
-                        }
-                        .disabled(!model.canCapture || model.isCapturing)
                     }
-                    .padding()
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(theme.cardBackground)
+                    .overlay(alignment: .top) { Divider() }
                 }
             }
             .background(theme.libraryBackground)
@@ -103,7 +98,16 @@ struct WebPageCaptureView: View {
                         .disabled(isExporting)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.document != nil {
+                    if model.document == nil {
+                        Menu {
+                            Button("Save as Series Link") { shareCurrentLink(as: .series) }
+                            Button("Save as Latest Chapter Link") { shareCurrentLink(as: .latestChapter) }
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share current page to Information")
+                        .disabled(model.currentURL == nil || (model.isLoading && !model.canCapture) || model.isCapturing)
+                    } else {
                         Button("Back to Page") {
                             model.returnToPage()
                             resetPreview()
@@ -148,6 +152,9 @@ struct WebPageCaptureView: View {
         } message: {
             Text("The .pdf extension is added automatically. Existing files are kept; duplicate names receive a number.")
         }
+        .sheet(item: $sharedLink) { link in
+            BookLinkEditorSheet(book: book, kind: link.kind, sharedURL: link.url, pageTitle: link.title)
+        }
         .sheet(isPresented: $showSaveSuccess) {
             saveSuccessDialog
                 .presentationDetents([.medium, .large])
@@ -158,6 +165,60 @@ struct WebPageCaptureView: View {
         }
     }
 
+    private var browserNavigationButtons: some View {
+        HStack(spacing: 8) {
+            browserNavigationButton("Back", icon: "chevron.left", disabled: !model.canGoBack || model.isCapturing) {
+                model.goBack()
+            }
+            browserNavigationButton("Forward", icon: "chevron.right", disabled: !model.canGoForward || model.isCapturing) {
+                model.goForward()
+            }
+            browserNavigationButton("Reload current page", icon: "arrow.clockwise", disabled: model.isCapturing) {
+                model.reload()
+            }
+            browserNavigationButton("Open in Browser", icon: "safari", disabled: model.isCapturing) {
+                openURL(model.currentURL ?? url)
+            }
+        }
+    }
+
+    private func browserNavigationButton(_ title: String, icon: String, disabled: Bool,
+                                         action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 21, weight: .semibold))
+                .frame(minWidth: 48, maxWidth: .infinity, minHeight: 52)
+                .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 14))
+                .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(theme.accent)
+        .accessibilityLabel(title)
+        .disabled(disabled)
+        .opacity(disabled ? 0.35 : 1)
+    }
+
+    private var browserCaptureButton: some View {
+        Button { model.capture(loadEntirePage: true) } label: {
+            Label("Capture", systemImage: "camera")
+                .font(.body.weight(.semibold))
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(theme.accent, in: RoundedRectangle(cornerRadius: 14))
+                .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .disabled(!model.canCapture || model.isCapturing)
+        .opacity(!model.canCapture || model.isCapturing ? 0.35 : 1)
+    }
+
+    private func shareCurrentLink(as kind: BookLinkKind) {
+        guard let currentURL = model.currentURL else { return }
+        sharedLink = SharedBookLink(kind: kind, url: currentURL, title: model.webView.title)
+    }
+
     private var cropControls: some View {
         VStack(spacing: 12) {
             if let warning = model.captureWarning {
@@ -165,38 +226,75 @@ struct WebPageCaptureView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            Text("The default crop skips five screenfuls at the bottom. Drag the corners to adjust, or choose Full Page.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            HStack {
-                Picker("Preview", selection: $overview) {
-                    Text("Overview").tag(true)
-                    Text("Detail").tag(false)
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    ForEach([true, false], id: \.self) { isOverview in
+                        Button { overview = isOverview } label: {
+                            Text(isOverview ? "Overview" : "Detail")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(overview == isOverview ? theme.cardBackground : .clear,
+                                            in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .foregroundStyle(overview == isOverview ? .primary : .secondary)
+                        .accessibilityAddTraits(overview == isOverview ? .isSelected : [])
+                    }
                 }
-                .pickerStyle(.segmented)
-                Button("Full Page") {
+                .padding(4)
+                .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Preview mode")
+
+                Button {
                     crop = CGRect(x: 0, y: 0, width: 1, height: 1)
                     saved = false
+                } label: {
+                    Text("Full Page")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 52)
+                        .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 14))
                 }
+                .foregroundStyle(theme.accent)
             }
-            HStack {
-                Button { requestExport(saveToSeries: false) } label: {
-                    Label("Share PDF", systemImage: "square.and.arrow.up")
-                }
-                Spacer()
-                if book.isSeries {
-                    Button { requestExport(saveToSeries: true) } label: {
-                        Label(saved ? "Saved to Chapters" : "Save PDF", systemImage: saved ? "checkmark" : "doc.badge.plus")
+            .buttonStyle(.plain)
+            GeometryReader { geometry in
+                let shareWidth = book.isSeries ? (geometry.size.width - 12) * 0.43 : geometry.size.width
+                HStack(spacing: 12) {
+                    Button { requestExport(saveToSeries: false) } label: {
+                        Label("Share PDF", systemImage: "square.and.arrow.up")
+                            .font(.body.weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .frame(width: shareWidth, height: exportButtonHeight)
+                            .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 14))
+                            .contentShape(RoundedRectangle(cornerRadius: 14))
                     }
-                    .disabled(saved)
+                    .foregroundStyle(theme.accent)
+                    if book.isSeries {
+                        Button { requestExport(saveToSeries: true) } label: {
+                            Label(saved ? "Saved" : "Save PDF", systemImage: saved ? "checkmark" : "arrow.down.to.line")
+                                .font(.body.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: exportButtonHeight)
+                                .foregroundStyle(.white)
+                                .background(theme.accent, in: RoundedRectangle(cornerRadius: 14))
+                                .contentShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .accessibilityLabel(saved ? "Saved to Chapters" : "Save PDF")
+                        .disabled(saved)
+                        .opacity(saved ? 0.55 : 1)
+                    }
                 }
+                .buttonStyle(.plain)
             }
-            Text("PDF export keeps the captured source quality. Detail renders each visible region directly from the PDF.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            .frame(height: exportButtonHeight)
         }
-        .padding([.top, .horizontal])
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .background(theme.cardBackground)
+        .overlay(alignment: .top) { Divider() }
         .disabled(isExporting)
         .onChange(of: crop) { _, _ in saved = false; savedDescription = nil }
     }
@@ -277,6 +375,8 @@ struct WebPageCaptureView: View {
     private func export(saveToSeries: Bool, filename: String) {
         guard let document = model.document, !isExporting else { return }
         let selection = crop
+        let sourceURL = model.capturedPageURL
+        let chapterTitle = model.suggestedFilename
         isExporting = true
         exportTask = Task {
             defer { isExporting = false }
@@ -286,7 +386,7 @@ struct WebPageCaptureView: View {
                 }.value
                 try Task.checkCancellation()
                 if saveToSeries {
-                    let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, modelContext: modelContext)
+                    let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: sourceURL, chapterTitle: chapterTitle, modelContext: modelContext)
                     savedDescription = "\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
                     saved = true
                     showSaveSuccess = true

@@ -16,6 +16,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     var status = "Loading page…"
     var errorMessage: String?
     var suggestedFilename = "Chapter"
+    private(set) var capturedPageURL: URL?
     var currentURL: URL?
     var canGoBack = false
     var canGoForward = false
@@ -205,7 +206,8 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     func capture(loadEntirePage: Bool) {
         guard canCapture, !isCapturing else { return }
         automaticCaptureNavigation = nil
-        suggestedFilename = CaptureFileName.chapterSuggestion(url: webView.url, title: webView.title)
+        capturedPageURL = webView.url
+        suggestedFilename = CaptureFileName.chapterSuggestion(url: capturedPageURL, title: webView.title)
         isCapturing = true
         errorMessage = nil
         captureWarning = nil
@@ -430,6 +432,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func returnToPage() {
+        capturedPageURL = nil
         document = nil
         captureWarning = nil
     }

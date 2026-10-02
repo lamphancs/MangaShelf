@@ -24,10 +24,8 @@ struct ChapterListView: View {
     @State private var bookmarkChapterIndex: Int?
     @State private var bookmarkNote = ""
     @State private var bookmarkColor: BookmarkColor = .red
-    @State private var showEditSeriesURL = false
-    @State private var seriesURLInput = ""
+    @State private var editingLink: BookLinkKind?
     @State private var showEditSeriesNote = false
-    @State private var seriesNoteInput = ""
     @State private var showInfoBox = false
     @State private var showLinkActions = false
     @State private var pendingCaptureURL: URL?
@@ -92,11 +90,11 @@ struct ChapterListView: View {
         .sheet(isPresented: $showAddBookmark) {
             addBookmarkSheet
         }
-        .sheet(isPresented: $showEditSeriesURL) {
-            editSeriesURLSheet
+        .sheet(item: $editingLink) { kind in
+            BookLinkEditorSheet(book: book, kind: kind)
         }
         .sheet(isPresented: $showEditSeriesNote) {
-            editSeriesNoteSheet
+            SeriesNoteEditorSheet(book: book)
         }
         .sheet(isPresented: $showLinkActions, onDismiss: {
             if let url = pendingCaptureURL {
@@ -367,46 +365,9 @@ struct ChapterListView: View {
     // MARK: - Series Info Box
 
     private var seriesInfoBox: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "link")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.accent)
-                    .frame(width: 28)
-
-                if let urlString = book.seriesURL, !urlString.isEmpty,
-                   let url = URL(string: urlString) {
-                    Button {
-                        showLinkActions = true
-                    } label: {
-                        Text(url.host ?? urlString)
-                            .font(.subheadline)
-                            .foregroundColor(theme.accent)
-                            .lineLimit(1)
-                    }
-
-                    Spacer()
-
-                    Button {
-                        seriesURLInput = urlString
-                        showEditSeriesURL = true
-                    } label: {
-                        Image(systemName: "pencil.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.white.opacity(0.15))
-                    }
-                } else {
-                    Button {
-                        seriesURLInput = ""
-                        showEditSeriesURL = true
-                    } label: {
-                        Text("Add link")
-                            .font(.subheadline)
-                            .foregroundColor(.tertiaryText)
-                    }
-                    Spacer()
-                }
-            }
+        VStack(spacing: 10) {
+            bookLinkRow(.series)
+            bookLinkRow(.latestChapter)
 
             Rectangle()
                 .fill(Color.white.opacity(0.04))
@@ -419,23 +380,21 @@ struct ChapterListView: View {
                     .frame(width: 28)
 
                 if let note = book.seriesNote, !note.isEmpty {
-                    Text(note)
+                    Text(note.trimmingCharacters(in: .whitespacesAndNewlines))
                         .font(.subheadline)
                         .foregroundColor(.white.opacity(0.8))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     Button {
-                        seriesNoteInput = note
                         showEditSeriesNote = true
                     } label: {
                         Image(systemName: "pencil.circle.fill")
                             .font(.system(size: 20))
-                            .foregroundColor(.white.opacity(0.15))
+                            .foregroundColor(theme.accent)
                     }
                 } else {
                     Button {
-                        seriesNoteInput = ""
                         showEditSeriesNote = true
                     } label: {
                         Text("Add note")
@@ -454,7 +413,8 @@ struct ChapterListView: View {
                 artAlbumSection
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(theme.cardBackground)
@@ -463,6 +423,38 @@ struct ChapterListView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
         )
+    }
+
+    private func bookLinkRow(_ kind: BookLinkKind) -> some View {
+        let value = kind == .series ? book.seriesURL : book.latestChapterURL
+        let url = BookLinkKind.webURL(value ?? "")
+        return HStack(spacing: 12) {
+            Image(systemName: kind == .series ? "link" : "book.pages")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.accent)
+                .frame(width: 28)
+            Button {
+                guard let url else { editingLink = kind; return }
+                if kind == .series {
+                    showLinkActions = true
+                } else {
+                    captureURL = CaptureLink(url: url)
+                }
+            } label: {
+                Text(url == nil ? kind.addLabel : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")"))
+                    .font(.subheadline)
+                    .foregroundColor(url == nil ? .tertiaryText : theme.accent)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            Spacer(minLength: 8)
+            Button { editingLink = kind } label: {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accent)
+            }
+            .accessibilityLabel("Edit \(kind.title)")
+        }
     }
 
     // MARK: - Link Actions
@@ -633,107 +625,6 @@ struct ChapterListView: View {
             bookmarkColor: $bookmarkColor,
             onSave: saveBookmark
         )
-    }
-
-    private var editSeriesURLSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Series URL") {
-                    TextField("https://...", text: $seriesURLInput)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-
-                if let existing = book.seriesURL, !existing.isEmpty {
-                    Section {
-                        Button(role: .destructive) {
-                            book.seriesURL = nil
-                            try? modelContext.save()
-                            showEditSeriesURL = false
-                            saveBookData()
-                        } label: {
-                            Label("Remove Link", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.libraryBackground)
-            .navigationTitle("Series Link")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
-                        showEditSeriesURL = false
-                    }
-                    .foregroundColor(.secondaryText)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        let trimmed = seriesURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                        book.seriesURL = trimmed.isEmpty ? nil : trimmed
-                        try? modelContext.save()
-                        showEditSeriesURL = false
-                        saveBookData()
-                    }
-                    .fontWeight(.semibold)
-                    .foregroundColor(theme.accent)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-        .preferredColorScheme(.dark)
-    }
-
-    private var editSeriesNoteSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Note") {
-                    TextEditor(text: $seriesNoteInput)
-                        .frame(minHeight: 120)
-                        .scrollContentBackground(.hidden)
-                }
-
-                if let existing = book.seriesNote, !existing.isEmpty {
-                    Section {
-                        Button(role: .destructive) {
-                            book.seriesNote = nil
-                            try? modelContext.save()
-                            showEditSeriesNote = false
-                            saveBookData()
-                        } label: {
-                            Label("Remove Note", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.libraryBackground)
-            .navigationTitle("Series Note")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
-                        showEditSeriesNote = false
-                    }
-                    .foregroundColor(.secondaryText)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        let trimmed = seriesNoteInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                        book.seriesNote = trimmed.isEmpty ? nil : trimmed
-                        try? modelContext.save()
-                        showEditSeriesNote = false
-                        saveBookData()
-                    }
-                    .fontWeight(.semibold)
-                    .foregroundColor(theme.accent)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-        .preferredColorScheme(.dark)
     }
 
     private func saveBookmark() {

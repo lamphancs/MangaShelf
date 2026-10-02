@@ -9,6 +9,8 @@ import SwiftData
 struct BookSeriesData: Codable {
     var note: String?
     var url: String?
+    var latestChapterURL: String?
+    var latestChapterNumber: String?
     var currentChapterIndex: Int = 0
     var lastReadDate: Date?
     var bookmarks: [BookmarkEntry] = []
@@ -37,6 +39,7 @@ struct BookSeriesData: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case latestChapterURL, latestChapterNumber
         case note, url, currentChapterIndex, lastReadDate, bookmarks
         case chapterProgress, chapterOffsets, chapterPageCounts, dateAdded, title
     }
@@ -50,6 +53,8 @@ struct BookSeriesData: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         note = try c.decodeIfPresent(String.self, forKey: .note)
         url = try c.decodeIfPresent(String.self, forKey: .url)
+        latestChapterURL = try c.decodeIfPresent(String.self, forKey: .latestChapterURL)
+        latestChapterNumber = try c.decodeIfPresent(String.self, forKey: .latestChapterNumber)
         currentChapterIndex = try c.decodeIfPresent(Int.self, forKey: .currentChapterIndex) ?? 0
         lastReadDate = try c.decodeIfPresent(Date.self, forKey: .lastReadDate)
         bookmarks = try c.decodeIfPresent([BookmarkEntry].self, forKey: .bookmarks) ?? []
@@ -191,6 +196,12 @@ final class BookDataService {
             changed = true
         }
 
+        if (book.latestChapterURL ?? "").isEmpty, let url = seriesData.latestChapterURL, !url.isEmpty {
+            book.latestChapterURL = url
+            book.latestChapterNumber = seriesData.latestChapterNumber
+            changed = true
+        }
+
         for chapter in book.sortedChapters {
             if let savedPage = seriesData.chapterProgress[chapter.filename],
                chapter.lastReadPage == 0, savedPage > 0 {
@@ -296,6 +307,8 @@ final class BookDataService {
         )
         data.note = book.seriesNote
         data.url = book.seriesURL
+        data.latestChapterURL = book.latestChapterURL
+        data.latestChapterNumber = book.latestChapterNumber
         data.dateAdded = book.dateAdded
 
         if let folderName = book.folderName {

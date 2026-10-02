@@ -75,6 +75,10 @@ final class Book {
     /// URL link to the series (e.g. manga website)
     var seriesURL: String?
 
+    /// Latest online chapter, independent of downloaded reading progress.
+    var latestChapterURL: String? = nil
+    var latestChapterNumber: String? = nil
+
     /// User note for this series
     var seriesNote: String?
 
