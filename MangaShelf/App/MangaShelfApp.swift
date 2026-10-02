@@ -31,6 +31,8 @@ struct MangaShelfApp: App {
                     .modelContainer(modelContainer)
                     .environment(themeManager)
                     .opacity(isReady ? 1 : 0)
+                    .allowsHitTesting(isReady)
+                    .accessibilityHidden(!isReady)
 
                 if !isReady {
                     SplashScreenView {

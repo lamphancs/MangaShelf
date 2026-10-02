@@ -1,71 +1,70 @@
 import SwiftUI
 
 struct SplashScreenView: View {
-
     var onFinished: () -> Void = {}
 
-    @State private var iconScale: CGFloat = 0.6
-    @State private var iconOpacity: Double = 0
-    @State private var titleOpacity: Double = 0
-    @State private var titleOffset: CGFloat = 20
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var iconVisible = false
+    @State private var buttonVisible = false
+    @State private var hasEntered = false
 
-    // Animation timing. The splash stays on screen until every intro
-    // animation has fully played, plus a short readable hold, before
-    // handing off to the library.
-    private let iconDuration: Double = 0.35
-    private let titleDelay: Double = 0.15
-    private let titleDuration: Double = 0.3
-    private let holdDuration: Double = 0.5
+    private let foreground = Color(red: 0.91, green: 0.87, blue: 0.81)
 
     var body: some View {
         ZStack {
             Color.black
                 .ignoresSafeArea()
 
-            VStack(spacing: 24) {
-                Image(systemName: "books.vertical.fill")
-                    .font(.system(size: 72))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.0, green: 0.48, blue: 1.0),
-                                Color(red: 0.62, green: 0.32, blue: 0.88)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .scaleEffect(iconScale)
-                    .opacity(iconOpacity)
-
-                VStack(spacing: 8) {
-                    Text("MangaShelf")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-
-                    Text("Loading your library...")
-                        .font(.subheadline)
-                        .foregroundColor(Color(white: 0.5))
-                }
-                .opacity(titleOpacity)
-                .offset(y: titleOffset)
+            Image("SplashIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 190, height: 190)
+                // Match the approved preview: black pixels merge into the backdrop.
+                .blendMode(.screen)
+                .opacity(iconVisible ? 1 : 0)
+                .accessibilityLabel("MangaShelf")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                guard !hasEntered else { return }
+                hasEntered = true
+                onFinished()
+            } label: {
+                Image(systemName: "arrow.right.to.line")
+                    .font(.system(size: 21, weight: .light))
+                    .foregroundStyle(foreground)
+                    .frame(width: 68, height: 44)
+                    .background(foreground.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(foreground.opacity(0.19), lineWidth: 1)
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Enter Library")
+            .accessibilityHidden(!buttonVisible)
+            .disabled(!buttonVisible || hasEntered)
+            .opacity(buttonVisible ? 1 : 0)
+            .padding(.trailing, 26)
+            .padding(.bottom, 24)
         }
         .task {
-            withAnimation(.easeOut(duration: iconDuration)) {
-                iconScale = 1.0
-                iconOpacity = 1.0
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 1.5)) {
+                iconVisible = true
             }
-            withAnimation(.easeOut(duration: titleDuration).delay(titleDelay)) {
-                titleOpacity = 1.0
-                titleOffset = 0
+
+            do {
+                try await Task.sleep(for: .seconds(1.2))
+            } catch {
+                return
             }
-            // Wait for the full intro animation to complete (the title finishes
-            // last, at titleDelay + titleDuration) plus a short hold so the
-            // library only appears once the splash has played out entirely.
-            let animationDuration = max(iconDuration, titleDelay + titleDuration)
-            try? await Task.sleep(for: .seconds(animationDuration + holdDuration))
-            onFinished()
+            guard !Task.isCancelled else { return }
+
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                buttonVisible = true
+            }
         }
     }
 }
