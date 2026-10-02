@@ -13,6 +13,7 @@ struct MangaShelfApp: App {
 
     let modelContainer: ModelContainer
     @State private var themeManager = ThemeManager()
+    @State private var libraryViewModel = LibraryViewModel()
     @State private var isReady = false
 
     init() {
@@ -27,7 +28,7 @@ struct MangaShelfApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                LibraryView()
+                LibraryView(viewModel: libraryViewModel)
                     .modelContainer(modelContainer)
                     .environment(themeManager)
                     .opacity(isReady ? 1 : 0)
@@ -35,7 +36,8 @@ struct MangaShelfApp: App {
                     .accessibilityHidden(!isReady)
 
                 if !isReady {
-                    SplashScreenView {
+                    SplashScreenView { isSecretMode in
+                        libraryViewModel.isSecretMode = isSecretMode
                         withAnimation(.easeInOut(duration: 0.4)) {
                             isReady = true
                         }

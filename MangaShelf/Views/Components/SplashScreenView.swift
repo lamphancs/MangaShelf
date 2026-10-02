@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SplashScreenView: View {
-    var onFinished: () -> Void = {}
+    var onFinished: (_ isSecretMode: Bool) -> Void = { _ in }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var iconVisible = false
@@ -27,9 +27,7 @@ struct SplashScreenView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) {
             Button {
-                guard !hasEntered else { return }
-                hasEntered = true
-                onFinished()
+                enterLibrary(isSecretMode: false)
             } label: {
                 Image(systemName: "arrow.right.to.line")
                     .font(.system(size: 21, weight: .light))
@@ -43,6 +41,12 @@ struct SplashScreenView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .highPriorityGesture(
+                LongPressGesture(minimumDuration: 5, maximumDistance: 10)
+                    .onEnded { _ in
+                        enterLibrary(isSecretMode: true)
+                    }
+            )
             .accessibilityLabel("Enter Library")
             .accessibilityHidden(!buttonVisible)
             .disabled(!buttonVisible || hasEntered)
@@ -66,6 +70,15 @@ struct SplashScreenView: View {
                 buttonVisible = true
             }
         }
+    }
+
+    private func enterLibrary(isSecretMode: Bool) {
+        guard buttonVisible, !hasEntered else { return }
+        hasEntered = true
+        if isSecretMode {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+        onFinished(isSecretMode)
     }
 }
 

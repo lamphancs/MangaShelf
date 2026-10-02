@@ -16,7 +16,7 @@ struct LibraryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query private var books: [Book]
 
-    @State private var viewModel = LibraryViewModel()
+    @State private var viewModel: LibraryViewModel
     @State private var selectedBook: Book?
     @State private var navigationPath = NavigationPath()
     @State private var showSettings = false
@@ -24,6 +24,11 @@ struct LibraryView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showPhotoPicker = false
     @AppStorage(StorageKey.libraryViewMode) private var viewMode: LibraryViewMode = .grid
+
+    @MainActor
+    init(viewModel: LibraryViewModel? = nil) {
+        _viewModel = State(initialValue: viewModel ?? LibraryViewModel())
+    }
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 20)
