@@ -24,6 +24,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var originalOffset: CGPoint?
     private var navigation: WKNavigation?
     private var requestedURL: URL?
+    private var automaticCaptureNavigation: WKNavigation?
 
     init(isPrivate: Bool = true) {
         let configuration = WKWebViewConfiguration()
@@ -56,6 +57,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if navigation !== automaticCaptureNavigation { automaticCaptureNavigation = nil }
         self.navigation = navigation
         cancelCapture()
         isLoading = true
@@ -80,6 +82,10 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
         canCapture = !isVerificationRequired
         requestedURL = webView.url ?? requestedURL
         updateNavigationState()
+        if let automaticCaptureNavigation, navigation === automaticCaptureNavigation {
+            self.automaticCaptureNavigation = nil
+            if canCapture { capture(loadEntirePage: true) }
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -92,6 +98,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     private func navigationFailed(_ navigation: WKNavigation?, error: Error) {
         guard navigation === self.navigation, (error as NSError).code != NSURLErrorCancelled else { return }
+        automaticCaptureNavigation = nil
         isLoading = false
         cancelCapture()
         updateNavigationState()
@@ -99,6 +106,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        automaticCaptureNavigation = nil
         cancelCapture()
         isLoading = false
         canCapture = false
@@ -110,7 +118,10 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse {
             isVerificationRequired = response.value(forHTTPHeaderField: "cf-mitigated")?.lowercased() == "challenge"
-            if isVerificationRequired { canCapture = false }
+            if isVerificationRequired {
+                canCapture = false
+                automaticCaptureNavigation = nil
+            }
         }
         // Let the user complete the site's verification in the actual web view.
         decisionHandler(.allow)
@@ -174,16 +185,18 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     @discardableResult
-    func goToNextChapter() -> Bool {
+    func goToNextChapter(automaticallyCapture: Bool = false) -> Bool {
         guard let nextChapterURL else { return false }
         returnToPage()
         self.nextChapterURL = nil
         load(nextChapterURL)
+        automaticCaptureNavigation = automaticallyCapture ? navigation : nil
         return true
     }
 
     func capture(loadEntirePage: Bool) {
         guard canCapture, !isCapturing else { return }
+        automaticCaptureNavigation = nil
         suggestedFilename = CaptureFileName.chapterSuggestion(url: webView.url, title: webView.title)
         isCapturing = true
         errorMessage = nil
@@ -402,6 +415,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func close() {
+        automaticCaptureNavigation = nil
         cancelCapture()
         webView.stopLoading()
         webView.navigationDelegate = nil

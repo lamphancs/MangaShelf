@@ -21,6 +21,7 @@ struct WebPageCaptureView: View {
     @State private var filenameInput = ""
     @State private var pendingSaveToSeries = true
     @State private var savedDescription: String?
+    @State private var showSaveSuccess = false
 
     init(url: URL, book: Book) {
         self.url = url
@@ -145,6 +146,11 @@ struct WebPageCaptureView: View {
         } message: {
             Text("The .pdf extension is added automatically. Existing files are kept; duplicate names receive a number.")
         }
+        .sheet(isPresented: $showSaveSuccess) {
+            saveSuccessDialog
+                .presentationDetents([.medium, .large])
+                .preferredColorScheme(.dark)
+        }
         .sheet(item: $sharedFile, onDismiss: removeTemporaryFile) { file in
             CaptureShareSheet(url: file.url)
         }
@@ -184,21 +190,6 @@ struct WebPageCaptureView: View {
                     .disabled(saved)
                 }
             }
-            if book.isSeries {
-                Button {
-                    if model.goToNextChapter() { resetPreview() }
-                } label: {
-                    Label("Go to next chapter", systemImage: "arrow.right.to.line")
-                }
-                .disabled(model.nextChapterURL == nil)
-                if model.nextChapterURL == nil {
-                    Text("No next-chapter link found. Use Back to Page to navigate manually.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if let savedDescription {
-                Text(savedDescription).font(.caption).foregroundStyle(.secondary)
-            }
             Text("PDF export keeps the captured source quality. Detail renders each visible region directly from the PDF.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -206,6 +197,65 @@ struct WebPageCaptureView: View {
         .padding()
         .disabled(isExporting)
         .onChange(of: crop) { _, _ in saved = false; savedDescription = nil }
+    }
+
+    private var saveSuccessDialog: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.green)
+                        .accessibilityHidden(true)
+                    Text(savedDescription ?? "")
+                        .font(.subheadline)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                    VStack(spacing: 12) {
+                        Button {
+                            advanceToNextChapter(automaticallyCapture: false)
+                        } label: {
+                            Label("Go to next chapter", systemImage: "arrow.right.to.line")
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                        }
+                        .buttonStyle(.bordered)
+                        Button {
+                            advanceToNextChapter(automaticallyCapture: true)
+                        } label: {
+                            Label("Next chapter & capture", systemImage: "camera")
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .disabled(model.nextChapterURL == nil)
+                    if model.nextChapterURL == nil {
+                        Text("No next-chapter link found. Close this message and use Back to Page to navigate manually.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(24)
+            }
+            .background(theme.libraryBackground)
+            .navigationTitle("PDF saved successfully")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSaveSuccess = false } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("Dismiss save confirmation")
+                }
+            }
+        }
+        .tint(theme.accent)
+    }
+
+    private func advanceToNextChapter(automaticallyCapture: Bool) {
+        guard model.goToNextChapter(automaticallyCapture: automaticallyCapture) else { return }
+        showSaveSuccess = false
+        resetPreview()
     }
 
     private func resetPreview() {
@@ -237,6 +287,7 @@ struct WebPageCaptureView: View {
                     let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, modelContext: modelContext)
                     savedDescription = "\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
                     saved = true
+                    showSaveSuccess = true
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 } else {
                     removeTemporaryFile()

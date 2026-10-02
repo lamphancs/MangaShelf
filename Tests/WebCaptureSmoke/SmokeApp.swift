@@ -114,6 +114,14 @@ struct CaptureSmokeView: View {
             browsingChecks.append("\(absentNext == nil ? "PASS" : "FAIL"): Current chapter is not reused as next chapter")
             model.goBack()
             try await waitForPage(query: nil)
+            model.nextChapterURL = nextChapter
+            let automaticAdvance = model.goToNextChapter(automaticallyCapture: true)
+            try await waitForPage(query: "chapter=2")
+            browsingChecks.append("\(automaticAdvance && model.isCapturing ? "PASS" : "FAIL"): Next chapter capture starts after navigation finishes")
+            model.cancelCapture()
+            model.goBack()
+            try await waitForPage(query: nil)
+            browsingChecks.append("\(!model.isCapturing && model.document == nil ? "PASS" : "FAIL"): Automatic capture is consumed once and can be cancelled")
             let pageBeforePopup = model.currentURL
             browsingChecks.append("\(!model.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically ? "PASS" : "FAIL"): Automatic JavaScript windows disabled")
             // Allow the request through WebKit's preference to exercise the delegate guard too.
@@ -139,7 +147,8 @@ struct CaptureSmokeView: View {
             try await waitForPage(query: "chapter=2")
             browsingChecks.append("\(model.document == nil && !model.isCapturing ? "PASS" : "FAIL"): Reload current page without capturing")
             let chapterURL = model.currentURL!
-            model.load(URL(string: "/challenge", relativeTo: chapterURL)!.absoluteURL)
+            model.nextChapterURL = URL(string: "/challenge", relativeTo: chapterURL)!.absoluteURL
+            model.goToNextChapter(automaticallyCapture: true)
             try await waitForPage(query: nil)
             browsingChecks.append("\(model.isVerificationRequired && !model.canCapture ? "PASS" : "FAIL"): Cloudflare response blocks capture but keeps verification page available")
             model.capture(loadEntirePage: true)
