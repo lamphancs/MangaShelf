@@ -30,6 +30,8 @@ struct ChapterListView: View {
     @State private var seriesNoteInput = ""
     @State private var showInfoBox = false
     @State private var showLinkActions = false
+    @State private var pendingCaptureURL: URL?
+    @State private var captureURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var artViewerItem: ArtViewerItem?
@@ -38,6 +40,11 @@ struct ChapterListView: View {
     private struct ArtViewerItem: Identifiable {
         let id = UUID()
         let index: Int
+    }
+
+    private struct CaptureLink: Identifiable {
+        let id = UUID()
+        let url: URL
     }
 
     var body: some View {
@@ -91,8 +98,18 @@ struct ChapterListView: View {
         .sheet(isPresented: $showEditSeriesNote) {
             editSeriesNoteSheet
         }
-        .sheet(isPresented: $showLinkActions) {
+        .sheet(isPresented: $showLinkActions, onDismiss: {
+            if let url = pendingCaptureURL {
+                pendingCaptureURL = nil
+                captureURL = CaptureLink(url: url)
+            }
+        }) {
             linkActionsSheet
+        }
+        .fullScreenCover(item: $captureURL, onDismiss: {
+            Task { await loadArtImages() }
+        }) { link in
+            WebPageCaptureView(url: link.url, book: book)
         }
         .fullScreenCover(item: $artViewerItem, onDismiss: {
             Task { await loadArtImages() }
@@ -476,6 +493,13 @@ struct ChapterListView: View {
                 Divider()
                     .padding(.horizontal, 20)
 
+                if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                    linkActionRow(icon: "camera.viewfinder", title: "Browse & Capture") {
+                        pendingCaptureURL = url
+                        showLinkActions = false
+                    }
+                }
+
                 linkActionRow(icon: "doc.on.doc", title: "Copy Link") {
                     UIPasteboard.general.string = urlString
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -484,7 +508,7 @@ struct ChapterListView: View {
             }
         }
         .padding(.bottom, 8)
-        .presentationDetents([.height(220)])
+        .presentationDetents([.height(280)])
         .presentationDragIndicator(.visible)
         .presentationBackground(theme.cardBackground)
         .preferredColorScheme(.dark)

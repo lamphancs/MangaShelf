@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box}body{margin:0;font:32px sans-serif}section{height:1000px;padding:50px}#lazy{background:orange}</style>
+<section style="background:#ff0000">TOP / 0–1000 <a id="next" href="?chapter=2">Next chapter</a></section>
+<section style="background:#00ff00">SECOND / 1000–2000</section>
+<section style="background:#0000ff">THIRD / 2000–3000</section>
+<section style="background:#ffff00">FOURTH / 3000–4000</section>
+<section id="lazy">BOTTOM / 4000–5000</section>
+<script>new IntersectionObserver(entries => {if(entries[0].isIntersecting){document.querySelector('#lazy').style.background='#ff00ff';document.querySelector('#lazy').textContent='LAZY CONTENT LOADED';}}).observe(document.querySelector('#lazy'));</script>
+
+<script>
+const mode = new URLSearchParams(location.search).get('images');
+if (mode) {
+    const image = document.createElement('img');
+    image.width = 120;
+    image.height = 120;
+    image.alt = 'Image fixture';
+    image.src = mode === 'broken' ? 'broken.webp' : 'stalled.png';
+    document.querySelector('section').append(image);
+}
+</script>
+
+<script>
+if (mode === 'deferred') {
+    document.querySelector('section img').remove();
+    const image = document.createElement('img');
+    image.width = 120;
+    image.height = 120;
+    image.dataset.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="cyan"/></svg>');
+    document.querySelectorAll('section')[2].append(image);
+    let timer;
+    new IntersectionObserver(entries => {
+        clearTimeout(timer);
+        if (entries[0].isIntersecting && !image.getAttribute('src')) {
+            timer = setTimeout(() => {
+                image.src = image.dataset.src;
+                delete image.dataset.src;
+            }, 700);
+        }
+    }).observe(image);
+}
+</script>

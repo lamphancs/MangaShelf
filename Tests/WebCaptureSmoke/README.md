@@ -1,0 +1,37 @@
+# Full-page capture smoke test
+
+With an iOS Simulator booted, run from the repository:
+
+```sh
+bash Tests/WebCaptureSmoke/run.sh
+# Or pass a simulator UUID as the first argument.
+```
+
+The runner builds a temporary copy with a separate bundle ID and a local HTML fixture. It checks browsing/navigation/reload without automatic capture, explicit 5,000-point page capture, offscreen IntersectionObserver content, PDF crop orientation and dimensions, byte-identical full export, retained PDF text, export beyond bitmap limits, PDFKit compatibility, chapter import, preserved reading position/bookmarks, invalid input, cancellation, immediate recapture, multi-page PDF preview/crop, missing/late WebKit callbacks, corrupt WebP images, stalled image requests, and a 44 MB / 140,000-point PDF. The large-document checks verify original-byte export, 1,200-pixel-wide detail at the beginning/middle/end, and that the real SwiftUI preview renders only visible/prefetched tiles. It leaves the build log, exported PDFs, and report in the printed temporary directory. The production app and its data are untouched.
+
+Manual checks on a device:
+
+1. Open a series → Information → its link → **Browse & Capture**. The link menu should dismiss before the capture screen opens.
+2. Navigate to another page, test Back/Forward and Reload, then tap Capture to prepare all lazy-loaded content. Nothing should capture automatically. Verify the first and last sections are present.
+3. Overview opens by default. On a long image-heavy chapter, check readable text at the beginning/middle/end, scroll rapidly and return to previously viewed regions. Overview should remain at least 100 points wide and scroll instead of collapsing into a line. Drag corners, move the selection using its center handle, reset with Full Page, switch modes, and rotate; verify the same source content stays selected.
+4. Save PDF, enter a custom name (including Unicode), save twice with the same name to check numbered copies without overwriting, close, and confirm the new PDF appears in the chapter list and opens in the reader. Check this in the main and secret libraries. Share PDF should ask for and use the chosen name. Compare an asymmetric crop selection in Overview with the saved PDF at its top, middle and bottom, including page boundaries. An unavailable series folder must report an error without claiming it saved. Verify existing reading progress/bookmarks still point to the same chapters.
+5. Back to Page lets you dismiss banners or sign in before recapturing. Check Reload, a failed URL, Stop Loading, immediate recapture, and closing during loading/export.
+6. Check a long/infinite-scroll page: finite long chapters should reach the bottom without a fixed time/height cutoff; use Stop Loading to cancel an infinite feed. The main Capture button always prepares the full page. A corrupt WebP/stalled image should produce a visible preview warning while still allowing a PDF of available content. Confirm the main document can be captured even while another resource is loading.
+
+Web capture includes the main document's scrollable area. Infinite feeds, virtualized lists that discard offscreen content, nested scrolling widgets, protected video/canvas content, and website login/CAPTCHA gates may require user interaction or may not render like static HTML. Capture sessions use an ephemeral WebKit data store. Previews use lazy PDF tiles at screen pixel width; the entire chapter is never resized into one bitmap. Full-page PDF export preserves original WebKit data; cropped PDF export preserves PDF drawing content without rasterizing through PNG. The reader/importer supports PDF chapters; existing PNG files remain art images and need recapturing to obtain the original PDF quality.
+
+Export checks also cover normalized filenames, collision-safe writes, exact raster alignment for asymmetric crops, native lossless PDF repacking, retained text, and unchanged pixels for the 44 MB fixture. Repacking can remove redundant structures; it cannot guarantee halving an already compressed image-heavy PDF without a quality tradeoff. Use `CAPTURE_TEST_ONLY=crop` to run only crop diagnosis through the same runner.
+
+Live diagnostic: `CAPTURE_TEST_ONLY=live CAPTURE_SMOKE_URL=https://example.com/chapter-641 bash Tests/WebCaptureSmoke/run.sh <simulator-id>` saves native/exported PDF and reports image dimensions and sizes. Confirm the reported title/content is the actual chapter, not an access challenge.
+
+Cloudflare handling is tested with a local HTTP 403 fixture carrying `cf-mitigated: challenge`: verification remains visible, capture is blocked, and normal navigation restores capture. Normal-library sessions use persistent WebKit storage; Secret Library sessions are ephemeral. Test real website verification manually on device; passing local checks does not establish that Cloudflare accepts a WebView. The browser button opens the current URL externally; it does not transfer Safari cookies back into the app.
+
+PDF size investigation (2026-09-26): enabling `saveImagesAsJPEGOption` while keeping `optimizeImagesForScreenOption` false in the existing export/repack path did **not** produce a smaller export for the 14-page image fixture: 44,075,728 bytes before and after the smaller-only fallback. Page geometry and reader rendering still passed. The experimental UI/API option was removed because it did not meet the size-reduction check. This measures the synthetic fixture, not chapter 641 or Safari output. Do not infer that changing this flag recompresses every existing PDF image.
+
+Apple references: [PDFKit saving and image encoding (WWDC22)](https://developer.apple.com/videos/play/wwdc2022/10089/) and [full-page screenshot PDF provider](https://developer.apple.com/documentation/uikit/uiscreenshotservicedelegate). The screenshot API accepts PDF data provided by the app; these references do not specify Safari's exact encoding/quality settings. A reliable Safari comparison requires both PDFs from the same chapter and crop, inspecting embedded image dimensions, encodings and duplicate resources. Retaining source JPEG streams avoids an extra lossy generation where possible; replacing images with JPEG or rasterizing strips must be explicitly offered as lossy, not described as preserving original quality.
+
+Long web-page regression: `CAPTURE_TEST_ONLY=long bash Tests/WebCaptureSmoke/run.sh` captures a 220,000-point HTML chapter, checking that all 220 IntersectionObserver sections were visited and the final text is in the PDF, and reporting capture duration.
+
+Image recovery regression: the standard suite includes an image with no initial source whose site loader needs 700 ms of visibility. It checks that the targeted second pass loads it, clears the warning, and includes its cyan pixels in the captured PDF. Broken and stalled images retain explicit warnings; cancellation remains supported.
+
+Popup regression: the standard suite checks automatic-window preferences, scripted popup rejection even with that preference temporarily enabled, and target-blank chapter-link navigation.

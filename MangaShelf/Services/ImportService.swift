@@ -209,6 +209,63 @@ final class ImportService {
         try modelContext.save()
     }
 
+    // MARK: - Captured Chapters
+
+    /// Write a capture alongside chapter PDFs (not in Art), then register it with the reader.
+    @MainActor
+    @discardableResult
+    func saveCapturedChapter(_ data: Data, for book: Book, filename: String = "Web Capture.pdf", modelContext: ModelContext) async throws -> URL {
+        guard book.isSeries, let folderName = book.folderName,
+              let bookmark = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (root, _) = try? LocalFileService.shared.resolveBookmark(bookmark),
+              root.startAccessingSecurityScopedResource() else { throw WebCaptureError.unavailableFolder }
+        defer { root.stopAccessingSecurityScopedResource() }
+        return try await saveCapturedChapter(data, for: book, filename: filename, seriesFolderURL: root.appendingPathComponent(folderName),
+                                      modelContext: modelContext)
+    }
+
+    @MainActor
+    @discardableResult
+    func saveCapturedChapter(_ data: Data, for book: Book, filename: String = "Web Capture.pdf", seriesFolderURL: URL,
+                             modelContext: ModelContext) async throws -> URL {
+        _ = try WebCaptureDocument(data: data)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: seriesFolderURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { throw WebCaptureError.unavailableFolder }
+
+        let target = try await Task.detached(priority: .userInitiated) {
+            try CaptureFileName.write(data, filename: filename, in: seriesFolderURL)
+        }.value
+
+        // Adding a naturally sorted filename can shift chapter indices. Preserve the
+        // identities behind the current chapter and all index-based bookmarks.
+        let oldChapters = book.sortedChapters
+        let currentFilename = oldChapters[safe: book.currentChapterIndex]?.filename
+        let bookmarks = book.sortedBookmarks.compactMap { bookmark -> (Bookmark, String)? in
+            guard let chapter = oldChapters[safe: bookmark.chapterIndex] else { return nil }
+            return (bookmark, chapter.filename)
+        }
+        do {
+            try await syncChapters(book, folderURL: seriesFolderURL, modelContext: modelContext)
+            let chapters = book.sortedChapters
+            if let index = chapters.firstIndex(where: { $0.filename == currentFilename }) {
+                book.currentChapterIndex = index
+            }
+            for (bookmark, filename) in bookmarks {
+                if let index = chapters.firstIndex(where: { $0.filename == filename }) {
+                    bookmark.chapterIndex = index
+                }
+            }
+            book.folderSignature = folderSignature(at: seriesFolderURL)
+            try modelContext.save()
+            await BookDataService.shared.save(book: book, seriesFolderURL: seriesFolderURL)
+        } catch {
+            throw NSError(domain: "WebCapture", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "The PDF was saved as \(target.lastPathComponent), but the chapter list could not be refreshed. Reopen the series or rescan in Settings. \(error.localizedDescription)"])
+        }
+        return target
+    }
+
     // MARK: - Rename
 
     func renameBook(_ book: Book, to newTitle: String, modelContext: ModelContext) async throws {
