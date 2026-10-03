@@ -11,6 +11,8 @@ struct WebPageCaptureView: View {
     @Environment(ThemeManager.self) private var theme
     @State private var model: WebPageCaptureModel
     @ScaledMetric(relativeTo: .body) private var exportButtonHeight = 56
+    @ScaledMetric(relativeTo: .body) private var browserToolbarHeight = 44
+    @ScaledMetric(relativeTo: .body) private var browserSideWidth = 56
     @State private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var overview = true
     @State private var isExporting = false
@@ -45,7 +47,7 @@ struct WebPageCaptureView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 if model.document == nil {
-                    addressBar
+                    browserToolbar
                 }
                 ZStack {
                     CaptureWebView(webView: model.webView)
@@ -98,6 +100,7 @@ struct WebPageCaptureView: View {
             .background(theme.libraryBackground)
             .navigationTitle(model.document == nil ? (model.currentURL?.host ?? url.host ?? "Web Page") : model.chapterTitle)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(model.document == nil ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
@@ -105,14 +108,7 @@ struct WebPageCaptureView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if model.document == nil {
-                        Menu {
-                            Button("Save as Series Link") { shareCurrentLink(as: .series) }
-                            Button("Save as Latest Chapter Link") { shareCurrentLink(as: .latestChapter) }
-                        } label: {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                        .accessibilityLabel("Share current page to Information")
-                        .disabled(model.currentURL == nil || (model.isLoading && !model.canCapture) || model.isCapturing)
+                        shareLinkMenu
                     } else {
                         Button("Back to Page") {
                             model.returnToPage()
@@ -176,9 +172,43 @@ struct WebPageCaptureView: View {
         }
     }
 
+    private var browserToolbar: some View {
+        HStack(spacing: 8) {
+            Button("Close") { dismiss() }
+                .frame(width: browserSideWidth, height: browserToolbarHeight)
+                .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+            addressBar
+            shareLinkMenu
+        }
+        .font(.body)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+        .background(theme.libraryBackground)
+    }
+
+    private var shareLinkMenu: some View {
+        Menu {
+            Button("Save as Series Link") { shareCurrentLink(as: .series) }
+            Button("Save as Latest Chapter Link") { shareCurrentLink(as: .latestChapter) }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .frame(width: browserSideWidth, height: browserToolbarHeight)
+                .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .accessibilityLabel("Share current page to Information")
+        .disabled(model.currentURL == nil || (model.isLoading && !model.canCapture) || model.isCapturing)
+    }
+
     private var addressBar: some View {
-        HStack(spacing: 12) {
-            TextField("Website address", text: $addressInput)
+        HStack(spacing: 0) {
+            TextField("Website address", text: Binding(
+                get: { isAddressFocused ? addressInput : (URL(string: addressInput)?.host ?? addressInput) },
+                set: { addressInput = $0 }
+            ))
+                .padding(.leading, 10)
+                .frame(minWidth: 0, maxWidth: .infinity)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -192,18 +222,16 @@ struct WebPageCaptureView: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(width: 44, height: browserToolbarHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Clear website address")
             .disabled(addressInput.isEmpty)
         }
-        .padding(12)
-        .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(theme.cardBackground)
+        .frame(maxWidth: .infinity)
+        .frame(height: browserToolbarHeight)
+        .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
         .disabled(model.isCapturing)
     }
 
