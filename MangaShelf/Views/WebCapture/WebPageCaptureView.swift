@@ -24,6 +24,8 @@ struct WebPageCaptureView: View {
     @State private var savedDescription: String?
     @State private var showSaveSuccess = false
     @State private var sharedLink: SharedBookLink?
+    @State private var addressInput: String
+    @FocusState private var isAddressFocused: Bool
 
     private struct SharedBookLink: Identifiable {
         let id = UUID()
@@ -35,12 +37,16 @@ struct WebPageCaptureView: View {
     init(url: URL, book: Book) {
         self.url = url
         self.book = book
+        _addressInput = State(initialValue: url.absoluteString)
         _model = State(initialValue: WebPageCaptureModel(isPrivate: book.isSecret))
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if model.document == nil {
+                    addressBar
+                }
                 ZStack {
                     CaptureWebView(webView: model.webView)
                         .allowsHitTesting(!model.isCapturing && model.document == nil)
@@ -120,6 +126,11 @@ struct WebPageCaptureView: View {
         .tint(theme.accent)
         .preferredColorScheme(.dark)
         .task { model.load(url) }
+        .onChange(of: model.currentURL) { _, currentURL in
+            if !isAddressFocused, let currentURL {
+                addressInput = currentURL.absoluteString
+            }
+        }
         .onChange(of: model.document != nil) { _, ready in
             if ready {
                 resetPreview()
@@ -165,6 +176,51 @@ struct WebPageCaptureView: View {
         }
     }
 
+    private var addressBar: some View {
+        HStack(spacing: 12) {
+            TextField("Website address", text: $addressInput)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused($isAddressFocused)
+                .onSubmit(navigateToAddress)
+                .accessibilityLabel("Website address")
+            Button {
+                addressInput = ""
+                isAddressFocused = true
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear website address")
+            .disabled(addressInput.isEmpty)
+        }
+        .padding(12)
+        .background(theme.libraryBackground, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(theme.cardBackground)
+        .disabled(model.isCapturing)
+    }
+
+    private func navigateToAddress() {
+        guard !model.isCapturing else { return }
+        let input = addressInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = URL(string: input)?.scheme == nil ? "https://" + input : input
+        guard let destination = BookLinkKind.webURL(candidate) else {
+            model.errorMessage = "Enter a valid website address, such as https://example.com."
+            return
+        }
+        isAddressFocused = false
+        addressInput = destination.absoluteString
+        resetPreview()
+        model.load(destination)
+    }
+
     private var browserNavigationButtons: some View {
         HStack(spacing: 8) {
             browserNavigationButton("Back", icon: "chevron.left", disabled: !model.canGoBack || model.isCapturing) {
@@ -199,7 +255,10 @@ struct WebPageCaptureView: View {
     }
 
     private var browserCaptureButton: some View {
-        Button { model.capture(loadEntirePage: true) } label: {
+        Button {
+            isAddressFocused = false
+            model.capture(loadEntirePage: true)
+        } label: {
             Label("Capture", systemImage: "camera")
                 .font(.body.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
