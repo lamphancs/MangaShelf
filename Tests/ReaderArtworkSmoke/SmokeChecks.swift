@@ -173,5 +173,54 @@ func runReaderArtworkChecks() async throws -> String {
     coordinator.clearDocument()
     try await Task.sleep(for: .milliseconds(200))
     try check(content.subviews.isEmpty && content.pageRects.isEmpty, "Cancelled chapter load cannot restore stale artwork")
+    // Source capture must remain sharp and correctly aligned even while display tiles
+    // are absent or affected by the chapter transition.
+    let sourceData = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 1200)).pdfData { context in
+        context.beginPage()
+        UIColor.red.setFill()
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: 300, height: 1200))
+        UIColor.green.setFill()
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: 300, height: 100))
+        context.beginPage()
+        UIColor.blue.setFill()
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: 300, height: 1200))
+    }
+    let captureContent = PDFContentView()
+    captureContent.configure(document: PDFDocument(data: sourceData)!, width: 300,
+                             viewportHeight: 400, artwork: pair)
+    let capturePDFLayer = captureContent.layer.sublayers!.first { $0.zPosition == 2 }!
+    let firstY = captureContent.pageRects[0].offset
+    captureContent.updateViewport(viewport(firstY + 50))
+    capturePDFLayer.opacity = 0.05
+    capturePDFLayer.sublayers?.forEach { $0.contents = nil }
+    let captured = captureContent.captureViewport(viewport(firstY + 50))!
+    func rgb(_ image: UIImage, x: CGFloat, y: CGFloat) -> [UInt8] {
+        let pixel = image.cgImage!.cropping(to: CGRect(x: x * image.scale, y: y * image.scale, width: 1, height: 1))!
+        var bytes = [UInt8](repeating: 0, count: 4)
+        bytes.withUnsafeMutableBytes { buffer in
+            let context = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                    bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return bytes
+    }
+    let top = rgb(captured, x: 150, y: 10)
+    let lower = rgb(captured, x: 150, y: 100)
+    try check(top[1] > 240 && top[0] < 15 && lower[0] > 240 && lower[1] < 15,
+              "Source capture preserves sharp top content at a nonzero offset without tile cache or opacity effects")
+    try check(captured.size == CGSize(width: 300, height: 400)
+              && captured.cgImage!.width == Int(300 * captured.scale),
+              "Capture uses viewport dimensions at display resolution")
+    let saved = UIImage(data: captured.jpegData(compressionQuality: 0.9)!)!
+    let savedTop = rgb(saved, x: 150 * captured.scale, y: 10 * captured.scale)
+    try check(savedTop[1] > 230 && savedTop[0] < 25,
+              "Top remains sharp after the gallery JPEG encoding round trip")
+    let seam = captureContent.captureViewport(viewport(firstY + 1100))!
+    try check(rgb(seam, x: 150, y: 50)[0] > 240 && rgb(seam, x: 150, y: 150)[2] > 240,
+              "Capture composites consecutive PDF pages without a blurred or missing seam")
+    captureContent.clearContent()
+    try check(captureContent.captureViewport(viewport(0)) == nil,
+              "Capture fails safely after chapter cleanup")
     return "PASS: \(passed) reader artwork checks"
 }

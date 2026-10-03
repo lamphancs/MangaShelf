@@ -44,12 +44,9 @@ struct PDFPageView: UIViewRepresentable {
         context.coordinator.scrollView = scrollView
         context.coordinator.contentView = contentView
 
-        onCaptureReady?({ [weak scrollView] in
-            guard let scrollView else { return nil }
-            let renderer = UIGraphicsImageRenderer(bounds: scrollView.bounds)
-            let image = renderer.image { _ in
-                scrollView.drawHierarchy(in: scrollView.bounds, afterScreenUpdates: false)
-            }
+        onCaptureReady?({ [weak coordinator = context.coordinator] in
+            guard let coordinator, let scrollView = coordinator.scrollView,
+                  let image = coordinator.contentView?.captureViewport(scrollView.bounds) else { return nil }
             return (image, max(0, scrollView.contentOffset.y))
         })
 
@@ -621,6 +618,51 @@ fileprivate class PDFContentView: UIView {
                 : [edgeColor, UIColor.black.cgColor]
         }
         CATransaction.commit()
+    }
+
+    /// Render source content, never the transient composited screen (fades, edge backdrops,
+    /// or partially loaded tiles). Keep output at display resolution with a zero-based origin.
+    func captureViewport(_ viewport: CGRect) -> UIImage? {
+        guard let document = pdfDocument, viewport.width > 0, viewport.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = cachedScreenScale > 0 ? cachedScreenScale : 2
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: viewport.size, format: format).image { context in
+            let cg = context.cgContext
+            cg.setFillColor(Self.bgColor)
+            cg.fill(CGRect(origin: .zero, size: viewport.size))
+            cg.translateBy(x: -viewport.minX, y: -viewport.minY)
+            cg.clip(to: viewport)
+
+            // Preserve artwork visible outside the PDF, but export its original sharp image.
+            for view in artViews where view.alpha > 0 {
+                guard let image = view.image, image.size.width > 0, image.size.height > 0 else { continue }
+                let scale = max(view.bounds.width / image.size.width, view.bounds.height / image.size.height)
+                let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                let rect = CGRect(x: view.frame.midX - size.width / 2, y: view.frame.midY - size.height / 2,
+                                  width: size.width, height: size.height)
+                cg.saveGState()
+                cg.clip(to: view.frame)
+                image.draw(in: rect)
+                cg.restoreGState()
+            }
+
+            for (index, layout) in pageRects.enumerated() {
+                let rect = CGRect(x: 0, y: layout.offset, width: contentWidth, height: layout.height)
+                guard rect.intersects(viewport), let page = document.page(at: index) else { continue }
+                let bounds = page.bounds(for: .mediaBox)
+                guard bounds.width > 0 else { continue }
+                let scale = contentWidth / bounds.width
+                cg.saveGState()
+                cg.clip(to: rect)
+                cg.setFillColor(Self.bgColor)
+                cg.fill(rect)
+                cg.translateBy(x: 0, y: rect.maxY)
+                cg.scaleBy(x: scale, y: -scale)
+                page.draw(with: .mediaBox, to: cg)
+                cg.restoreGState()
+            }
+        }
     }
 
     // MARK: - Render Completion

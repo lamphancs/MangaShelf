@@ -23,7 +23,7 @@ MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from 
 | Cover carousel | Swipe cover to browse art; tap to expand into full-screen viewer | `ChapterListView.coverHeader`, `ArtViewerOverlay` |
 | Cover crop | Draggable 2:3 crop box over any art image → 400×600 JPEG cover | `CoverCropOverlay`, `ArtViewerOverlay` |
 | Web page capture | Series link action → browse/navigate → explicit Capture → lazy-load preparation → full-page PDF / crop, share / save as chapter | `WebPageCaptureView`, `FullPageCropView`, `WebPageCaptureModel`, `WebCaptureDocument` |
-| Reader screenshot capture | Floating camera button captures current viewport into the series `Art/` folder | `ReaderView`, `ReaderViewModel.captureCurrentPage()`, `PDFPageView` capture closure |
+| Reader screenshot capture | Floating camera button renders the current viewport directly from source PDF/artwork into the series `Art/` folder, excluding transition effects and tile-loading placeholders | `ReaderView`, `ReaderViewModel.captureCurrentPage()`, `PDFPageView` capture closure |
 | Reading progress & bookmarks | Per-chapter page + exact scroll-offset tracking; colored bookmarks with optional notes | `Book.readingProgress`, `Bookmark`, `ChapterListView`, `ReaderViewModel` |
 | Portable series data | Notes, link, progress, offsets, page counts, bookmarks saved to `.mangashelf/data.json` | `BookDataService` |
 | Secret library | Hidden shelf behind a 5-second long-press on the settings icon; separate folder bookmark | `Book.isSecret`, `LibraryView` long-press, `SettingsView` secret section |
