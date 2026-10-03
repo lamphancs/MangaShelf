@@ -55,15 +55,21 @@ final class ReaderViewModel {
 
     /// True while the "go to top" button is waiting for the top of the chapter to render.
     var isScrollingToTop = false
+    var scrollToBottom: ((@escaping () -> Void) -> Void)?
+    var isScrollingToBottom = false
 
     /// True while the reader is restoring a saved scroll position and its tiles are still loading.
     var isRestoringPosition = false
 
     private var accessedURL: URL?
     private var folderURL: URL?
+    var artFolderURL: URL? {
+        folderURL?.appendingPathComponent("Art", isDirectory: true)
+    }
     private var hasSecurityAccess = false
     private var overlayHideTask: Task<Void, Never>?
     private var chapterLoadTask: Task<PDFDocument?, Never>?
+    private var bottomLoadingTimeoutTask: Task<Void, Never>?
     private var topLoadingTimeoutTask: Task<Void, Never>?
     private var restoreTimeoutTask: Task<Void, Never>?
 
@@ -124,6 +130,8 @@ final class ReaderViewModel {
         chapterLoadTask = nil
         topLoadingTimeoutTask?.cancel()
         topLoadingTimeoutTask = nil
+        bottomLoadingTimeoutTask?.cancel()
+        bottomLoadingTimeoutTask = nil
         restoreTimeoutTask?.cancel()
         restoreTimeoutTask = nil
         if hasSecurityAccess, let url = accessedURL {
@@ -224,6 +232,23 @@ final class ReaderViewModel {
             try? await Task.sleep(for: .seconds(4))
             guard let self, !Task.isCancelled, self.isScrollingToTop else { return }
             withAnimation(.easeInOut(duration: 0.2)) { self.isScrollingToTop = false }
+        }
+    }
+
+    func goToBottom() {
+        guard let scrollToBottom else { return }
+        UIImpactFeedbackGenerator.impact(.medium)
+        isScrollingToBottom = true
+        scrollToBottom { [weak self] in
+            guard let self else { return }
+            self.bottomLoadingTimeoutTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.2)) { self.isScrollingToBottom = false }
+        }
+        bottomLoadingTimeoutTask?.cancel()
+        bottomLoadingTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self, !Task.isCancelled, self.isScrollingToBottom else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { self.isScrollingToBottom = false }
         }
     }
 

@@ -7,10 +7,12 @@
 
 import SwiftUI
 import PDFKit
+import ImageIO
 
 struct PDFPageView: UIViewRepresentable {
 
     let pdfDocument: PDFDocument?
+    let artFolderURL: URL?
     @Binding var currentPage: Int
     /// Exact vertical scroll offset (content points) to restore on first load. `0` falls back
     /// to page-based restore (`currentPage`), which is what pre-offset saved data will have.
@@ -24,6 +26,7 @@ struct PDFPageView: UIViewRepresentable {
     /// Hands the parent a `scrollToTop(completion:)` closure: it scrolls (animated) to the top
     /// of the current chapter and calls `completion` once the top tiles have finished rendering.
     var onScrollToTopReady: ((@escaping (@escaping () -> Void) -> Void) -> Void)? = nil
+    var onScrollToBottomReady: ((@escaping (@escaping () -> Void) -> Void) -> Void)? = nil
     /// Called (main thread) once the restored initial position's tiles have finished rendering.
     var onRestoreComplete: (() -> Void)? = nil
 
@@ -50,13 +53,23 @@ struct PDFPageView: UIViewRepresentable {
             return (image, max(0, scrollView.contentOffset.y))
         })
 
-        onOffsetReady?({ [weak scrollView] in
-            max(0, scrollView?.contentOffset.y ?? 0)
+        onOffsetReady?({ [weak coordinator = context.coordinator] in
+            guard let coordinator else { return 0 }
+            if let pendingOffset = coordinator.pendingRestoreOffset { return pendingOffset }
+            // Persist in original PDF coordinates so gallery changes never shift progress.
+            return max(0, (coordinator.scrollView?.contentOffset.y ?? 0)
+                       - (coordinator.contentView?.openingContentOffset ?? 0))
         })
 
         onScrollToTopReady?({ [weak coordinator = context.coordinator] completion in
             guard let coordinator else { completion(); return }
             coordinator.scrollToTop()
+            coordinator.awaitTargetRendered(completion)
+        })
+
+        onScrollToBottomReady?({ [weak coordinator = context.coordinator] completion in
+            guard let coordinator else { completion(); return }
+            coordinator.scrollToBottom()
             coordinator.awaitTargetRendered(completion)
         })
 
@@ -72,19 +85,11 @@ struct PDFPageView: UIViewRepresentable {
             } else {
                 sceneWidth = scene?.coordinateSpace.bounds.width ?? 393
             }
-            context.coordinator.loadDocument(doc, width: sceneWidth)
-            let restoreOffset = initialOffset
-            let restorePage = currentPage
-            let onRestore = onRestoreComplete
-            DispatchQueue.main.async {
-                if restoreOffset > 0 {
-                    context.coordinator.scrollToOffset(restoreOffset)
-                    context.coordinator.awaitTargetRendered { onRestore?() }
-                } else {
-                    context.coordinator.scrollToPage(restorePage, animated: false)
-                    onRestore?()
-                }
-            }
+            context.coordinator.loadDocument(
+                doc, width: sceneWidth, artFolderURL: artFolderURL,
+                restorePage: currentPage, restoreOffset: initialOffset,
+                onRestore: onRestoreComplete
+            )
         }
 
         return scrollView
@@ -100,14 +105,14 @@ struct PDFPageView: UIViewRepresentable {
         }
 
         if let doc = pdfDocument, coordinator.pdfDocument !== doc {
-            coordinator.loadDocument(doc, width: scrollView.bounds.width)
-            DispatchQueue.main.async {
-                coordinator.scrollToPage(currentPage, animated: false)
-            }
+            coordinator.loadDocument(
+                doc, width: scrollView.bounds.width, artFolderURL: artFolderURL,
+                restorePage: currentPage
+            )
             return
         }
 
-        if coordinator.reportedPage != currentPage {
+        if !coordinator.isAnimatingScroll, coordinator.reportedPage != currentPage {
             coordinator.scrollToPage(currentPage, animated: false)
         }
     }
@@ -123,9 +128,12 @@ struct PDFPageView: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         fileprivate weak var contentView: PDFContentView?
         var pdfDocument: PDFDocument?
+        var isAnimatingScroll = false
         var reportedPage = 0
+        var pendingRestoreOffset: CGFloat?
         private var pageOffsets: [CGFloat] = []
         private var pageCount = 0
+        private var documentLoadTask: Task<Void, Never>?
         /// The viewport rect of the most recent deliberate jump (restore / go-to-top), used to
         /// wait for that exact position to finish rendering rather than any scrolled-through one.
         private var pendingTargetRect: CGRect = .zero
@@ -134,16 +142,41 @@ struct PDFPageView: UIViewRepresentable {
             self.parent = parent
         }
 
-        func loadDocument(_ doc: PDFDocument, width: CGFloat) {
+        func loadDocument(
+            _ doc: PDFDocument, width: CGFloat, artFolderURL: URL?,
+            restorePage: Int, restoreOffset: CGFloat = 0,
+            onRestore: (() -> Void)? = nil
+        ) {
+            clearDocument()
             pdfDocument = doc
-            guard let contentView = contentView else { return }
-            contentView.configure(document: doc, width: width)
-            pageOffsets = contentView.pageRects.map { $0.offset }
-            pageCount = contentView.pageRects.count
-            scrollView?.contentSize = contentView.bounds.size
+            pendingRestoreOffset = restoreOffset
+            documentLoadTask = Task { @MainActor [weak self] in
+                let artwork = await Task.detached(priority: .userInitiated) {
+                    ChapterArtwork.load(from: artFolderURL)
+                }.value
+                guard !Task.isCancelled, let self, let contentView = self.contentView else { return }
+                contentView.configure(
+                    document: doc, width: max(self.scrollView?.bounds.width ?? width, 1),
+                    viewportHeight: self.scrollView?.bounds.height ?? 0, artwork: artwork
+                )
+                self.pageOffsets = contentView.pageRects.map { $0.offset }
+                self.pageCount = contentView.pageRects.count
+                self.scrollView?.contentSize = contentView.bounds.size
+                self.pendingRestoreOffset = nil
+                if restoreOffset > 0 {
+                    self.scrollToOffset(restoreOffset + contentView.openingContentOffset)
+                    self.awaitTargetRendered { onRestore?() }
+                } else {
+                    self.scrollToPage(restorePage, animated: false)
+                    onRestore?()
+                }
+            }
         }
 
         func clearDocument() {
+            isAnimatingScroll = false
+            documentLoadTask?.cancel()
+            documentLoadTask = nil
             pdfDocument = nil
             contentView?.clearContent()
             pageOffsets = []
@@ -152,13 +185,15 @@ struct PDFPageView: UIViewRepresentable {
         }
 
         func scrollToPage(_ page: Int, animated: Bool) {
-            guard page < pageOffsets.count else { return }
+            guard page >= 0, page < pageOffsets.count else { return }
             let y: CGFloat = page == 0 ? 0 : pageOffsets[page]
+            isAnimatingScroll = animated && scrollView?.contentOffset.y != y
             scrollView?.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
             reportedPage = page
             if let scrollView {
                 contentView?.updateViewport(
-                    CGRect(x: 0, y: y, width: scrollView.bounds.width, height: scrollView.bounds.height)
+                    CGRect(x: 0, y: y, width: scrollView.bounds.width, height: scrollView.bounds.height),
+                    updateEffects: !isAnimatingScroll
                 )
             }
         }
@@ -186,6 +221,17 @@ struct PDFPageView: UIViewRepresentable {
             if let scrollView {
                 pendingTargetRect = CGRect(x: 0, y: 0, width: scrollView.bounds.width, height: scrollView.bounds.height)
             }
+        }
+
+        func scrollToBottom(animated: Bool = true) {
+            guard let scrollView, pageCount > 0 else { return }
+            let y = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+            pendingTargetRect = CGRect(x: 0, y: y, width: scrollView.bounds.width, height: scrollView.bounds.height)
+            isAnimatingScroll = animated && scrollView.contentOffset.y != y
+            scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
+            reportedPage = pageCount - 1
+            parent.currentPage = reportedPage
+            contentView?.updateViewport(pendingTargetRect, updateEffects: !isAnimatingScroll)
         }
 
         /// Fires `completion` (on the main thread) once every tile intersecting the last
@@ -219,6 +265,15 @@ struct PDFPageView: UIViewRepresentable {
             )
         }
 
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            isAnimatingScroll = false
+        }
+
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            isAnimatingScroll = false
+            flushPageReport()
+        }
+
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             flushPageReport()
         }
@@ -241,12 +296,48 @@ struct PDFPageView: UIViewRepresentable {
     }
 }
 
+/// Decode only two bounded-size images, off the main thread. Invalid gallery entries are
+/// skipped; a gallery with one usable image reuses it for both ends.
+private enum ChapterArtwork {
+    nonisolated static func load(from folder: URL?) -> [UIImage] {
+        guard let folder,
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+              ) else { return [] }
+        let extensions: Set<String> = ["jpg", "jpeg", "png", "heic", "webp", "gif"]
+        var images: [UIImage] = []
+        for file in files.filter({ extensions.contains($0.pathExtension.lowercased()) }).shuffled() {
+            autoreleasepool {
+                guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 2048
+                      ] as CFDictionary) else { return }
+                images.append(UIImage(cgImage: image))
+            }
+            if images.count == 2 { break }
+        }
+        if images.count == 1 { images.append(images[0]) }
+        return images
+    }
+}
+
 // MARK: - PDF Content View
 
 fileprivate class PDFContentView: UIView {
     var pdfDocument: PDFDocument?
     var pageRects: [(offset: CGFloat, height: CGFloat)] = []
     private var contentWidth: CGFloat = 0
+    private(set) var openingArtHeight: CGFloat = 0
+    /// Difference from the original PDF-only layout, which includes a top safe-area inset.
+    private(set) var openingContentOffset: CGFloat = 0
+    private var artViews: [UIImageView] = []
+    private var artTransitions: [CAGradientLayer] = []
+    private var artBackdrops: [CALayer] = []
+    private var artworkFadeDistance: CGFloat = 0
+    private var artworkScrollEnd: CGFloat = 0
+    private let pdfLayer = CALayer()
 
     /// Immutable snapshot of the tile layout, captured on the main thread and handed to the
     /// render queue so the background renderer never races against `configure`/`clearContent`.
@@ -305,7 +396,7 @@ fileprivate class PDFContentView: UIView {
     private var renderTargetRect: CGRect = .zero
     private var renderCompletion: (() -> Void)?
 
-    func configure(document: PDFDocument, width: CGFloat) {
+    func configure(document: PDFDocument, width: CGFloat, viewportHeight: CGFloat, artwork: [UIImage]) {
         generation += 1
         pdfDocument = document
         contentWidth = width
@@ -316,6 +407,11 @@ fileprivate class PDFContentView: UIView {
         scheduleQueue.async { [weak self] in self?.inflightOps.removeAll() }
         tileLayers.forEach { $0.removeFromSuperlayer() }
         tileLayers.removeAll()
+        if pdfLayer.superlayer == nil { layer.addSublayer(pdfLayer) }
+        // Keep story pixels above artwork while both layers crossfade at chapter boundaries.
+        pdfLayer.zPosition = 2
+        pdfLayer.opacity = 1
+        pdfLayer.transform = CATransform3DIdentity
         os_unfair_lock_lock(&unfairLock)
         tileImages.removeAll()
         inflightTiles.removeAll()
@@ -329,7 +425,20 @@ fileprivate class PDFContentView: UIView {
             return scene?.keyWindow?.safeAreaInsets.top ?? 59
         }()
 
-        var offset = topInset
+        artViews.forEach { $0.removeFromSuperview() }
+        artViews.removeAll()
+        artTransitions.removeAll()
+        artBackdrops.forEach { $0.removeFromSuperlayer() }
+        artBackdrops.removeAll()
+        // Each artwork page fills the viewport, independently of the image aspect ratio.
+        openingArtHeight = artwork.isEmpty ? 0 : (viewportHeight > 0 ? viewportHeight : screenHeight())
+        if let opening = artwork.first {
+            addArtPage(opening, y: 0, width: width)
+        }
+        // Keep a complete artwork page before the PDF. Only the boundary transition
+        // may overlap content; no chapter content sits underneath the initial cover.
+        openingContentOffset = artwork.isEmpty ? 0 : openingArtHeight - topInset
+        var offset = artwork.isEmpty ? topInset : openingArtHeight
         pageRects = []
 
         var tilePageIndex: [Int] = []
@@ -356,7 +465,7 @@ fileprivate class PDFContentView: UIView {
                 tileLayer.contentsScale = cachedScreenScale
                 tileLayer.contentsGravity = .resize
                 tileLayer.backgroundColor = Self.placeholderColor
-                layer.addSublayer(tileLayer)
+                pdfLayer.addSublayer(tileLayer)
 
                 tileLayers.append(tileLayer)
                 tilePageIndex.append(i)
@@ -377,15 +486,71 @@ fileprivate class PDFContentView: UIView {
             bandHeight: tileBandHeight
         )
 
+        if let closing = artwork.last {
+            addArtPage(closing, y: offset, width: width)
+            offset += openingArtHeight
+        }
+        // Keep physical layer order consistent with zPosition, including viewport captures.
+        pdfLayer.removeFromSuperlayer()
+        layer.addSublayer(pdfLayer)
+        let visibleHeight = viewportHeight > 0 ? viewportHeight : screenHeight()
+        artworkScrollEnd = max(0, offset - visibleHeight)
+        artworkFadeDistance = openingArtHeight
         frame = CGRect(x: 0, y: 0, width: width, height: offset)
         backgroundColor = UIColor.black
 
         // Prime the first viewport so the top of the chapter is ready before the first scroll.
-        let viewportHeight = screenHeight()
-        scheduleRender(top: 0, bottom: viewportHeight * overscanFactor)
+        updateArtEffects(CGRect(x: 0, y: 0, width: width, height: visibleHeight))
+        scheduleRender(top: 0, bottom: visibleHeight * overscanFactor)
+    }
+
+    private func addArtPage(_ image: UIImage, y: CGFloat, width: CGFloat) {
+        let backdrop = CALayer()
+        backdrop.zPosition = 0.5
+        backdrop.contentsGravity = .resize
+        layer.addSublayer(backdrop)
+        artBackdrops.append(backdrop)
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = .black
+        imageView.frame = CGRect(x: 0, y: y, width: width, height: openingArtHeight)
+        imageView.isUserInteractionEnabled = false
+        // A mask reveals live PDF pixels at the edge; it never paints a sampled color strip.
+        let mask = CAGradientLayer()
+        mask.frame = imageView.bounds
+        mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor]
+        imageView.layer.mask = mask
+        imageView.layer.zPosition = 1
+        artTransitions.append(mask)
+        addSubview(imageView)
+        artViews.append(imageView)
+    }
+
+    private func updateArtBackdrop(image: CGImage, tileIndex: Int) {
+        guard artBackdrops.count == 2 else { return }
+        // Extend the adjoining page's edge only into the artwork area. Actual PDF tiles
+        // crossfade above both this backdrop and the fading artwork.
+        if tileIndex == 0 {
+            artBackdrops[0].contents = image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: 1))
+        }
+        if tileIndex == tileLayout.count - 1 {
+            artBackdrops[1].contents = image.cropping(to: CGRect(x: 0, y: image.height - 1, width: image.width, height: 1))
+        }
     }
 
     func clearContent() {
+        artViews.forEach { $0.removeFromSuperview() }
+        artViews.removeAll()
+        artTransitions.removeAll()
+        artBackdrops.forEach { $0.removeFromSuperlayer() }
+        artBackdrops.removeAll()
+        openingArtHeight = 0
+        openingContentOffset = 0
+        artworkFadeDistance = 0
+        artworkScrollEnd = 0
+        pdfLayer.transform = CATransform3DIdentity
+        pdfLayer.opacity = 1
         generation += 1
         pdfDocument = nil
         renderQueue.cancelAllOperations()
@@ -404,7 +569,9 @@ fileprivate class PDFContentView: UIView {
 
     /// Called on the main thread for every scroll event. Determines which tiles must be
     /// rendered/kept for the given viewport and (throttled) schedules the work off-main.
-    func updateViewport(_ rect: CGRect) {
+    func updateViewport(_ rect: CGRect, updateEffects: Bool = true) {
+        // Opacity follows every scroll frame, independently of throttled PDF tile rendering.
+        if updateEffects { updateArtEffects(rect) }
         let overscan = max(rect.height, 1) * overscanFactor
         let top = rect.minY - overscan
         let bottom = rect.maxY + overscan
@@ -414,6 +581,46 @@ fileprivate class PDFContentView: UIView {
         lastScheduledTop = top
 
         scheduleRender(top: top, bottom: bottom)
+    }
+
+    private func updateArtEffects(_ viewport: CGRect) {
+        guard artViews.count == 2, artTransitions.count == 2 else { return }
+        func smooth(_ value: CGFloat) -> CGFloat {
+            let t = min(1, max(0, value))
+            return t * t * (3 - 2 * t)
+        }
+        let distance = max(artworkFadeDistance, 1)
+        let openingProgress = min(1, max(0, viewport.minY / distance))
+        let closingProgress = min(1, max(0,
+            (viewport.minY - (artworkScrollEnd - distance)) / distance))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Counter the scroll offset so the artwork stays at the same screen coordinates.
+        for view in artViews { view.frame = viewport }
+        artViews[0].alpha = 1 - smooth(openingProgress)
+        artViews[1].alpha = smooth(closingProgress)
+        // The PDF becomes fully visible after the opening transition, then fades out
+        // into the closing artwork. Scrolling back reverses both effects continuously.
+        pdfLayer.opacity = Float(min(smooth(openingProgress), 1 - smooth(closingProgress)))
+        for index in artViews.indices {
+            let view = artViews[index]
+            let backdrop = artBackdrops[index]
+            backdrop.frame = viewport
+            backdrop.isHidden = view.alpha == 0
+            let progress = index == 0 ? openingProgress : 1 - closingProgress
+            let mask = artTransitions[index]
+            mask.frame = view.bounds
+            let edgeAlpha = 1 - smooth(progress / 0.2)
+            let edgeColor = UIColor.black.withAlphaComponent(edgeAlpha).cgColor
+            let band = min(72 / max(viewport.height, 1), 0.12)
+            mask.locations = index == 0
+                ? [NSNumber(value: Double(1 - band)), 1]
+                : [0, NSNumber(value: Double(band))]
+            mask.colors = index == 0
+                ? [UIColor.black.cgColor, edgeColor]
+                : [edgeColor, UIColor.black.cgColor]
+        }
+        CATransaction.commit()
     }
 
     // MARK: - Render Completion
@@ -647,6 +854,7 @@ fileprivate class PDFContentView: UIView {
                         CATransaction.begin()
                         CATransaction.setDisableActions(true)
                         self.tileLayers[tileIdx].contents = cgImage
+                        self.updateArtBackdrop(image: cgImage, tileIndex: tileIdx)
                         CATransaction.commit()
                         self.checkRenderCompletion()
                     }

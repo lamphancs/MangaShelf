@@ -35,6 +35,7 @@ struct ReaderView: View {
 
             PDFPageView(
                 pdfDocument: viewModel.pdfDocument,
+                artFolderURL: viewModel.artFolderURL,
                 currentPage: $viewModel.currentPage,
                 initialOffset: viewModel.initialOffset,
                 onPageChange: { newPage in
@@ -51,6 +52,9 @@ struct ReaderView: View {
                 },
                 onScrollToTopReady: { action in
                     viewModel.scrollToTop = action
+                },
+                onScrollToBottomReady: { action in
+                    viewModel.scrollToBottom = action
                 },
                 onRestoreComplete: {
                     viewModel.restoreDidComplete()
@@ -197,6 +201,27 @@ struct ReaderView: View {
                     }
                     .disabled(viewModel.isScrollingToTop)
                     .accessibilityLabel("Go to top")
+
+                    Button {
+                        viewModel.goToBottom()
+                    } label: {
+                        Group {
+                            if viewModel.isScrollingToBottom {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "arrow.down.to.line")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    }
+                    .disabled(viewModel.isScrollingToBottom)
+                    .accessibilityLabel("Go to bottom")
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
