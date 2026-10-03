@@ -38,8 +38,8 @@ struct EmptyLibraryView: View {
                     .foregroundColor(.primary)
 
                 Text(isConfigured
-                     ? "Add manga series folders with PDF chapters\nto your root folder"
-                     : "Set up your manga folder in Settings\nto get started")
+                     ? "Tap + to create a series, or add PDF\nfolders to your library folder"
+                     : "Tap + to add your first series,\nor choose a folder in Settings")
                     .font(.body)
                     .foregroundColor(.secondaryText)
                     .multilineTextAlignment(.center)

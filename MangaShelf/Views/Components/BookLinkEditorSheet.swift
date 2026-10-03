@@ -7,7 +7,7 @@ enum BookLinkKind: String, Identifiable {
     var title: String { self == .series ? "Series Link" : "Latest Chapter Link" }
     var addLabel: String { self == .series ? "Add series link" : "Add latest chapter link" }
 
-    static func webURL(_ input: String) -> URL? {
+    nonisolated static func webURL(_ input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }),
               let url = URL(string: trimmed),

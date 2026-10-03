@@ -311,12 +311,9 @@ final class BookDataService {
         data.latestChapterNumber = book.latestChapterNumber
         data.dateAdded = book.dateAdded
 
-        if let folderName = book.folderName {
-            let autoTitle = folderName.cleanedMangaTitle()
-            if book.title != autoTitle {
-                data.title = book.title
-            }
-        }
+        // Always persist the display title, even when it matches the current folder.
+        // A later folder rename must not change the title when rebuilding the cache.
+        data.title = book.title
 
         for chapter in book.sortedChapters {
             if chapter.lastReadPage > 0 {

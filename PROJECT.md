@@ -15,6 +15,7 @@ MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from 
 | Feature | Description | Key files |
 |---|---|---|
 | Library grid/list | Browsable library with search, sort (Recently Added / A–Z / Last Read), grid⇄list toggle | `LibraryView`, `BookCardView`, `BookRowView`, `LibraryCellComponents`, `EmptyLibraryView`, `SortMenuView`, `LibraryViewModel` |
+| Add series | Trailing + tile in grid/list and empty library → title, optional folder name/note → optional series URL → Done creates folder + portable metadata; Browse also opens Browse & Capture (Google when URL is empty). Supports both shelves and first-use folder selection; duplicate folders are rejected. Empty series with `.mangashelf/data.json` survive scans and cache rebuilds. Display titles are always persisted; chapter scroll offsets restore during rebuilds after a folder move/rename. | `AddSeriesView`, `NewSeries`, `ImportService` |
 | Folder import & scan | Scans root/secret folder for series subfolders + loose PDFs, upserts `Book`/`Chapter` rows, generates thumbnails | `ImportService`, `SettingsView`, `LibraryViewModel` |
 | PDF reader | Full-screen continuous vertical reader on a custom tiled `CALayer` renderer | `ReaderView`, `ReaderViewModel`, `PDFPageView` |
 | Chapter navigation | Chapter list with sort toggle, in-reader jump-to-chapter picker, prev/next buttons, animated go-to-top/bottom actions | `ChapterListView`, `ReaderOverlayView`, `ReaderViewModel` |

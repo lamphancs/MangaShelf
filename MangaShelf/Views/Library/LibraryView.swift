@@ -20,6 +20,10 @@ struct LibraryView: View {
     @State private var selectedBook: Book?
     @State private var navigationPath = NavigationPath()
     @State private var showSettings = false
+    @State private var showAddSeries = false
+    @State private var newlyCreatedBook: Book?
+    @State private var browseAfterCreation = false
+    @State private var bookForCapture: Book?
     @State private var bookForCoverPick: Book?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showPhotoPicker = false
@@ -45,8 +49,12 @@ struct LibraryView: View {
                     .ignoresSafeArea()
 
                 if filteredBooks.isEmpty {
-                    EmptyLibraryView {
-                        showSettings = true
+                    VStack {
+                        EmptyLibraryView {
+                            showSettings = true
+                        }
+                        AddSeriesTile(isGrid: false) { showAddSeries = true }
+                            .padding(20)
                     }
                 } else {
                     ScrollView {
@@ -72,6 +80,7 @@ struct LibraryView: View {
                                         }
                                     )
                                 }
+                                AddSeriesTile(isGrid: true) { showAddSeries = true }
                             }
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
@@ -98,6 +107,7 @@ struct LibraryView: View {
                                         }
                                     )
                                 }
+                                AddSeriesTile(isGrid: false) { showAddSeries = true }
                             }
                             .padding(.horizontal, 16)
                             .padding(.top, 20)
@@ -178,6 +188,27 @@ struct LibraryView: View {
                 Task { await viewModel.quickRefresh(modelContext: modelContext) }
             }) {
                 SettingsView(isSecretMode: viewModel.isSecretMode)
+            }
+            .sheet(isPresented: $showAddSeries, onDismiss: {
+                if let book = newlyCreatedBook {
+                    viewModel.searchText = ""
+                    navigationPath.append(book.id)
+                    if browseAfterCreation { bookForCapture = book }
+                    browseAfterCreation = false
+                    newlyCreatedBook = nil
+                }
+                Task { await viewModel.quickRefresh(modelContext: modelContext) }
+            }) {
+                AddSeriesView(isSecret: viewModel.isSecretMode) { book, browse in
+                    newlyCreatedBook = book
+                    browseAfterCreation = browse
+                }
+            }
+            .fullScreenCover(item: $bookForCapture) { book in
+                WebPageCaptureView(
+                    url: book.seriesURL.flatMap(BookLinkKind.webURL) ?? NewSeriesDraft.defaultBrowseURL,
+                    book: book
+                )
             }
             .alert("Error", isPresented: $viewModel.showError) {
                 Button("OK", role: .cancel) {}

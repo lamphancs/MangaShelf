@@ -85,7 +85,7 @@ final class ImportService {
             let values = try item.resourceValues(forKeys: [.isDirectoryKey])
             if values.isDirectory == true {
                 let pdfs = (try? fm.contentsOfDirectory(at: item, includingPropertiesForKeys: nil))?.filter { $0.pathExtension.lowercased() == "pdf" } ?? []
-                if !pdfs.isEmpty {
+                if !pdfs.isEmpty || fm.fileExists(atPath: BookDataService.dataFileURL(in: item).path) {
                     seriesFolders.append(item)
                 }
             } else if item.pathExtension.lowercased() == "pdf" {
@@ -334,7 +334,7 @@ final class ImportService {
             .filter { $0.pathExtension.lowercased() == "pdf" }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
-        guard !pdfFiles.isEmpty else { return }
+        guard !pdfFiles.isEmpty || fm.fileExists(atPath: BookDataService.dataFileURL(in: folderURL).path) else { return }
 
         let folderName = folderURL.lastPathComponent
         let seriesData = await BookDataService.shared.load(seriesFolderURL: folderURL)
@@ -388,8 +388,8 @@ final class ImportService {
                 book.hasManualCover = true
             }
         }
-        if book.thumbnailPath == nil {
-            let thumbnailURL = await thumbnailService.generateThumbnail(for: pdfFiles[0], identifier: folderName)
+        if book.thumbnailPath == nil, let firstPDF = pdfFiles.first {
+            let thumbnailURL = await thumbnailService.generateThumbnail(for: firstPDF, identifier: folderName)
             book.thumbnailPath = thumbnailURL?.lastPathComponent
             book.hasManualCover = false
         }
@@ -406,6 +406,9 @@ final class ImportService {
             for chapter in chapters {
                 if let savedPage = seriesData.chapterProgress[chapter.filename] {
                     chapter.lastReadPage = savedPage
+                }
+                if let savedOffset = seriesData.chapterOffsets[chapter.filename] {
+                    chapter.lastReadOffset = savedOffset
                 }
             }
             for entry in seriesData.bookmarks {
