@@ -11,3 +11,5 @@ go-to-bottom navigation, short-chapter backgrounds, and pixel-level checks that 
 
 Source capture checks cover nonzero scroll offsets, sharp top pixels, missing display tiles,
 transition opacity, PDF page boundaries, display resolution, and JPEG encoding for gallery storage.
+
+Fast-scroll checks cover directional prefetch with a fixed window, visible-tile priority, reverse scrolling, rapid jumps through a tall PDF, chapter replacement during rendering, correct final displayed pixels, and bounded retained tiles. Smoothness still needs profiling on a physical device with representative PDFs.

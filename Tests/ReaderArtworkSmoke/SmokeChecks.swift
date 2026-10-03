@@ -7,6 +7,23 @@ func runReaderArtworkChecks() async throws -> String {
         guard condition else { throw CheckFailure(message: message) }
         passed += 1
     }
+    let testViewport = CGRect(x: 0, y: 5000, width: 390, height: 800)
+    let still = ReaderRenderWindow(viewport: testViewport, velocity: 0)
+    let down = ReaderRenderWindow(viewport: testViewport, velocity: 12000)
+    let up = ReaderRenderWindow(viewport: testViewport, velocity: -12000)
+    try check(still.top == 3800 && still.bottom == 7000, "Idle prefetch stays symmetric")
+    try check(down.top == 4600 && down.bottom == 7800, "Fast downward fling keeps 2.5 screens ahead")
+    try check(up.top == 3000 && up.bottom == 6200, "Direction reversal mirrors prefetch immediately")
+    try check(down.bottom - down.top == still.bottom - still.top
+              && up.bottom - up.top == still.bottom - still.top,
+              "Fling prefetch does not grow the decoded-image window")
+    let ahead = CGRect(x: 0, y: 6000, width: 390, height: 384)
+    let behind = CGRect(x: 0, y: 4500, width: 390, height: 384)
+    try check(down.priority(for: testViewport) == .veryHigh
+              && down.priority(for: ahead) == .high && down.priority(for: behind) == .low,
+              "Visible work wins over forward prefetch and trailing work")
+    try check(up.priority(for: behind) == .high && up.priority(for: ahead) == .low,
+              "Reverse fling promotes work in the new direction")
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
@@ -222,5 +239,41 @@ func runReaderArtworkChecks() async throws -> String {
     captureContent.clearContent()
     try check(captureContent.captureViewport(viewport(0)) == nil,
               "Capture fails safely after chapter cleanup")
+    // Exercise cancellation/replacement using real background renders of a tall PDF.
+    let tallBounds = CGRect(x: 0, y: 0, width: 300, height: 12000)
+    func tallDocument(_ color: UIColor) -> PDFDocument {
+        let data = UIGraphicsPDFRenderer(bounds: tallBounds).pdfData { context in
+            context.beginPage()
+            color.setFill()
+            context.fill(tallBounds)
+        }
+        return PDFDocument(data: data)!
+    }
+    let flingContent = PDFContentView()
+    flingContent.configure(document: tallDocument(.red), width: 300, viewportHeight: 400, artwork: [])
+    for y in [800, 2400, 4800, 8000, 10000, 7800, 4500, 2200, 900] {
+        flingContent.updateViewport(viewport(CGFloat(y)))
+        try await Task.sleep(for: .milliseconds(12))
+    }
+    // Replace the chapter while work from the fling may still be pending.
+    flingContent.configure(document: tallDocument(.blue), width: 300, viewportHeight: 400, artwork: [])
+    let destination = viewport(6000)
+    flingContent.updateViewport(destination)
+    var settled = false
+    flingContent.awaitViewportRendered(destination) { settled = true }
+    for _ in 0..<100 where !settled { try await Task.sleep(for: .milliseconds(20)) }
+    try check(settled, "Visible tiles finish after rapid scrolling, reversal and chapter replacement")
+    // Let pending layer commits run before inspecting actual displayed pixels.
+    try await Task.sleep(for: .milliseconds(100))
+    let flingLayer = flingContent.layer.sublayers!.first { $0.zPosition == 2 }!
+    let visibleTiles = flingLayer.sublayers!.filter { $0.frame.intersects(destination) }
+    try check(!visibleTiles.isEmpty && visibleTiles.allSatisfy { tile in
+        guard let contents = tile.contents else { return false }
+        let pixel = rgb(UIImage(cgImage: contents as! CGImage), x: 1, y: 1)
+        return pixel[2] > 240 && pixel[0] < 15
+    }, "Only the replacement chapter appears; no blank visible tiles or stale red pixels")
+    try check(flingLayer.sublayers!.filter { $0.contents != nil }.count <= 6,
+              "Tall chapters retain only the bounded viewport window after a fling")
+    flingContent.clearContent()
     return "PASS: \(passed) reader artwork checks"
 }
