@@ -97,6 +97,7 @@ struct AddSeriesSmokeApp: App {
         rich.lastReadDate = Date(timeIntervalSince1970: 1_700_000_000)
         rich.latestChapterURL = "https://example.com/manga/42"
         rich.latestChapterNumber = "42"
+        rich.englishSeriesURL = "https://example.com/en/manga"
         let addedDate = rich.dateAdded
         rich.sortedChapters[1].lastReadPage = 2
         rich.sortedChapters[1].lastReadOffset = 123.5
@@ -129,6 +130,7 @@ struct AddSeriesSmokeApp: App {
                   && returned.lastReadDate == Date(timeIntervalSince1970: 1_700_000_000), "Dates restored")
         try check(returned.latestChapterNumber == "42" && returned.latestChapterURL == "https://example.com/manga/42",
                   "Latest chapter restored")
+        try check(returned.englishSeriesURL == "https://example.com/en/manga", "English version link restored")
         try check(returned.currentChapterIndex == 1 && returned.sortedChapters[1].lastReadPage == 2
                   && returned.sortedChapters[1].lastReadOffset == 123.5 && returned.totalPages == 6, "Reading state restored")
         try check(returned.sortedBookmarks.first?.note == "Remember this"

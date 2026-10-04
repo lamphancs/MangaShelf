@@ -2,10 +2,43 @@ import SwiftUI
 import SwiftData
 
 enum BookLinkKind: String, Identifiable {
-    case series, latestChapter
+    case series, latestChapter, englishSeries
     var id: String { rawValue }
-    var title: String { self == .series ? "Series Link" : "Latest Chapter Link" }
-    var addLabel: String { self == .series ? "Add series link" : "Add latest chapter link" }
+    var title: String {
+        switch self {
+        case .series: "Series Link"
+        case .latestChapter: "Latest Chapter Link"
+        case .englishSeries: "Eng Version"
+        }
+    }
+    var addLabel: String {
+        switch self {
+        case .series: "Add series link"
+        case .latestChapter: "Add latest chapter link"
+        case .englishSeries: "Add Eng version link"
+        }
+    }
+    var sectionTitle: String {
+        switch self {
+        case .series: "Series table of contents"
+        case .latestChapter: "Latest chapter"
+        case .englishSeries: "English version of the series"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .series: "link"
+        case .latestChapter: "book.pages"
+        case .englishSeries: "globe"
+        }
+    }
+    var urlKeyPath: ReferenceWritableKeyPath<Book, String?> {
+        switch self {
+        case .series: \Book.seriesURL
+        case .latestChapter: \Book.latestChapterURL
+        case .englishSeries: \Book.englishSeriesURL
+        }
+    }
 
     nonisolated static func webURL(_ input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -31,7 +64,7 @@ struct BookLinkEditorSheet: View {
     init(book: Book, kind: BookLinkKind, sharedURL: URL? = nil, pageTitle: String? = nil) {
         self.book = book
         self.kind = kind
-        let existing = kind == .series ? book.seriesURL : book.latestChapterURL
+        let existing = book[keyPath: kind.urlKeyPath]
         let initialURL = sharedURL?.absoluteString ?? existing ?? ""
         _urlInput = State(initialValue: initialURL)
         let suggestion = CaptureFileName.chapterSuggestion(url: URL(string: initialURL), title: pageTitle)
@@ -42,13 +75,13 @@ struct BookLinkEditorSheet: View {
     private var trimmedURL: String { urlInput.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedNumber: String { numberInput.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var canSave: Bool {
-        trimmedURL.isEmpty || (BookLinkKind.webURL(trimmedURL) != nil && (kind == .series || !trimmedNumber.isEmpty))
+        trimmedURL.isEmpty || (BookLinkKind.webURL(trimmedURL) != nil && (kind != .latestChapter || !trimmedNumber.isEmpty))
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section(kind == .series ? "Series table of contents" : "Latest chapter") {
+                Section(kind.sectionTitle) {
                     TextField("https://...", text: $urlInput)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
@@ -63,7 +96,7 @@ struct BookLinkEditorSheet: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
-                if let existing = kind == .series ? book.seriesURL : book.latestChapterURL, !existing.isEmpty {
+                if let existing = book[keyPath: kind.urlKeyPath], !existing.isEmpty {
                     Section {
                         Button("Remove Link", role: .destructive) { save(remove: true) }
                     }
@@ -101,13 +134,11 @@ struct BookLinkEditorSheet: View {
     }
 
     private func save(remove: Bool) {
-        let oldURL = kind == .series ? book.seriesURL : book.latestChapterURL
+        let oldURL = book[keyPath: kind.urlKeyPath]
         let oldNumber = book.latestChapterNumber
         let value = remove || trimmedURL.isEmpty ? nil : trimmedURL
-        if kind == .series {
-            book.seriesURL = value
-        } else {
-            book.latestChapterURL = value
+        book[keyPath: kind.urlKeyPath] = value
+        if kind == .latestChapter {
             book.latestChapterNumber = value == nil ? nil : trimmedNumber
         }
         do {
@@ -119,8 +150,8 @@ struct BookLinkEditorSheet: View {
                 dismiss()
             }
         } catch {
-            if kind == .series { book.seriesURL = oldURL }
-            else { book.latestChapterURL = oldURL; book.latestChapterNumber = oldNumber }
+            book[keyPath: kind.urlKeyPath] = oldURL
+            if kind == .latestChapter { book.latestChapterNumber = oldNumber }
             saveError = error.localizedDescription
         }
     }

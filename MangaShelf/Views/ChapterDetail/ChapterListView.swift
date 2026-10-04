@@ -28,6 +28,7 @@ struct ChapterListView: View {
     @State private var showEditSeriesNote = false
     @State private var showInfoBox = false
     @State private var showLinkActions = false
+    @State private var actionLinkKind: BookLinkKind = .series
     @State private var pendingCaptureURL: URL?
     @State private var captureURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
@@ -368,6 +369,7 @@ struct ChapterListView: View {
         VStack(spacing: 10) {
             bookLinkRow(.series)
             bookLinkRow(.latestChapter)
+            bookLinkRow(.englishSeries)
 
             Rectangle()
                 .fill(Color.white.opacity(0.04))
@@ -426,22 +428,23 @@ struct ChapterListView: View {
     }
 
     private func bookLinkRow(_ kind: BookLinkKind) -> some View {
-        let value = kind == .series ? book.seriesURL : book.latestChapterURL
+        let value = book[keyPath: kind.urlKeyPath]
         let url = BookLinkKind.webURL(value ?? "")
         return HStack(spacing: 12) {
-            Image(systemName: kind == .series ? "link" : "book.pages")
+            Image(systemName: kind.icon)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.accent)
                 .frame(width: 28)
             Button {
                 guard let url else { editingLink = kind; return }
-                if kind == .series {
+                if kind != .latestChapter {
+                    actionLinkKind = kind
                     showLinkActions = true
                 } else {
                     captureURL = CaptureLink(url: url)
                 }
             } label: {
-                Text(url == nil ? kind.addLabel : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")"))
+                Text(url == nil ? kind.addLabel : (kind == .englishSeries ? "Eng Version" : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")")))
                     .font(.subheadline)
                     .foregroundColor(url == nil ? .tertiaryText : theme.accent)
                     .lineLimit(2)
@@ -461,7 +464,7 @@ struct ChapterListView: View {
 
     private var linkActionsSheet: some View {
         VStack(spacing: 0) {
-            if let urlString = book.seriesURL, !urlString.isEmpty,
+            if let urlString = book[keyPath: actionLinkKind.urlKeyPath], !urlString.isEmpty,
                let url = URL(string: urlString) {
 
                 Text(url.host ?? urlString)

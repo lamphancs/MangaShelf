@@ -397,6 +397,7 @@ final class ImportService {
         if let seriesData {
             book.seriesNote = seriesData.note
             book.seriesURL = seriesData.url
+            book.englishSeriesURL = seriesData.englishSeriesURL
             book.latestChapterURL = seriesData.latestChapterURL
             book.latestChapterNumber = seriesData.latestChapterNumber
             if seriesData.currentChapterIndex > 0 {

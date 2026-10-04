@@ -9,6 +9,7 @@ import SwiftData
 struct BookSeriesData: Codable {
     var note: String?
     var url: String?
+    var englishSeriesURL: String?
     var latestChapterURL: String?
     var latestChapterNumber: String?
     var currentChapterIndex: Int = 0
@@ -39,7 +40,7 @@ struct BookSeriesData: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case latestChapterURL, latestChapterNumber
+        case latestChapterURL, latestChapterNumber, englishSeriesURL
         case note, url, currentChapterIndex, lastReadDate, bookmarks
         case chapterProgress, chapterOffsets, chapterPageCounts, dateAdded, title
     }
@@ -53,6 +54,7 @@ struct BookSeriesData: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         note = try c.decodeIfPresent(String.self, forKey: .note)
         url = try c.decodeIfPresent(String.self, forKey: .url)
+        englishSeriesURL = try c.decodeIfPresent(String.self, forKey: .englishSeriesURL)
         latestChapterURL = try c.decodeIfPresent(String.self, forKey: .latestChapterURL)
         latestChapterNumber = try c.decodeIfPresent(String.self, forKey: .latestChapterNumber)
         currentChapterIndex = try c.decodeIfPresent(Int.self, forKey: .currentChapterIndex) ?? 0
@@ -196,6 +198,11 @@ final class BookDataService {
             changed = true
         }
 
+        if (book.englishSeriesURL ?? "").isEmpty, let url = seriesData.englishSeriesURL, !url.isEmpty {
+            book.englishSeriesURL = url
+            changed = true
+        }
+
         if (book.latestChapterURL ?? "").isEmpty, let url = seriesData.latestChapterURL, !url.isEmpty {
             book.latestChapterURL = url
             book.latestChapterNumber = seriesData.latestChapterNumber
@@ -307,6 +314,7 @@ final class BookDataService {
         )
         data.note = book.seriesNote
         data.url = book.seriesURL
+        data.englishSeriesURL = book.englishSeriesURL
         data.latestChapterURL = book.latestChapterURL
         data.latestChapterNumber = book.latestChapterNumber
         data.dateAdded = book.dateAdded
