@@ -350,15 +350,13 @@ struct CaptureSmokeView: View {
         let multi = try WebCaptureDocument(data: source)
         check(multi.pageCount == 3 && multi.size == CGSize(width: 400, height: 3000),
               "Multi-page PDF accepted as continuous document (regression for invalidDocument)")
-        check(try multi.pdfData() == source, "Multi-page full export preserves original PDF bytes")
+        let joined = try WebCaptureDocument(data: multi.pdfData())
+        check(joined.pageCount == 1 && joined.size == multi.size, "Full export joins source pages without a page separator")
         let crossPage = try multi.pdfData(crop: CGRect(x: 0.1, y: 1.0 / 6, width: 0.8, height: 2.0 / 3))
         let cropped = try WebCaptureDocument(data: crossPage)
         let pdf = PDFDocument(data: crossPage)!
-        check(pdf.pageCount == 3 && abs(cropped.size.height - 2000) < 0.1 && abs(cropped.size.width - 320) < 0.1,
+        check(pdf.pageCount == 1 && abs(cropped.size.height - 2000) < 0.1 && abs(cropped.size.width - 320) < 0.1,
               "Crop across three PDF pages preserves all selected content")
-        let pageHeights = (0..<pdf.pageCount).map { pdf.page(at: $0)!.bounds(for: .mediaBox).height }
-        check(zip(pageHeights, [CGFloat(500), 1000, 500]).allSatisfy { abs($0 - $1) < 0.1 },
-              "First and last PDF pages cropped at correct boundaries")
         let first = pixel(try cropped.render(crop: CGRect(x: 0, y: 0, width: 1, height: 0.2)))
         let last = pixel(try cropped.render(crop: CGRect(x: 0, y: 0.8, width: 1, height: 0.2)))
         check(first[0] > 240 && first[2] < 15 && last[2] > 240 && last[0] < 15,
@@ -430,10 +428,12 @@ struct CaptureSmokeView: View {
         let document = try WebCaptureDocument(data: data)
         check(data.count >= 40_000_000 && document.size.height == 140_000,
               "Stress fixture: \(data.count / 1_000_000) MB PDF, 140000-point chapter")
-        check(try document.pdfData() == data, "Large PDF export retains original bytes without compression/downsampling")
+        let joinedData = try document.pdfData()
+        let joined = try WebCaptureDocument(data: joinedData)
+        check(joined.pageCount == 1 && joined.size == document.size, "Large PDF joins into one 140000-point page")
         let optimizedData = try document.exportPDF()
         let optimizedDocument = try WebCaptureDocument(data: optimizedData)
-        check(optimizedData.count <= data.count, "Large export never grows after optimization (\(data.count) → \(optimizedData.count) bytes)")
+        check(optimizedData.count <= joinedData.count, "Large export never grows after optimization (\(data.count) → \(optimizedData.count) bytes)")
         let renderer = CapturePDFTileRenderer(document: document)
         for top: CGFloat in [0, 70_000, 139_500] {
             let image = try await renderer.image(crop: CGRect(x: 0, y: top / document.size.height,
@@ -498,10 +498,12 @@ struct CaptureSmokeView: View {
         }
         let document = try WebCaptureDocument(data: source)
         var checks: [String] = []
-        for rect in [CGRect(x: 0.2, y: 0.14, width: 0.6, height: 0.72),
+        for rect in [CGRect(x: 0, y: 0, width: 1, height: 1),
+                     CGRect(x: 0.2, y: 0.14, width: 0.6, height: 0.72),
                      CGRect(x: 0.3, y: 0.72, width: 0.4, height: 0.18)] {
             let expected = try document.render(crop: rect, pixelWidth: 480)
             let output = try WebCaptureDocument(data: document.pdfData(crop: rect))
+            checks.append("\(output.pageCount == 1 ? "PASS" : "FAIL"): Export has one continuous page")
             let actual = try output.render(pixelWidth: 480)
             let a = expected.cgImage!.dataProvider!.data! as Data
             let b = actual.cgImage!.dataProvider!.data! as Data

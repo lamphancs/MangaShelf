@@ -45,11 +45,10 @@ nonisolated struct WebCaptureDocument: Sendable {
         return CGRect(x: 0, y: 0, width: 1, height: retainedHeight / size.height)
     }
 
-    /// Full export is byte-for-byte WebKit output. A crop is written as PDF pages
-    /// covering its vertical intersections, without flattening them into a bitmap.
+    /// Join source pages into one continuous PDF page, without rasterizing content.
     func pdfData(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> Data {
         let rect = try cropRect(crop)
-        if rect == CGRect(origin: .zero, size: size) { return data }
+        if pageCount == 1 && rect == CGRect(origin: .zero, size: size) { return data }
         guard let provider = CGDataProvider(data: data as CFData),
               let document = CGPDFDocument(provider) else { throw WebCaptureError.invalidDocument }
         let output = NSMutableData()
@@ -57,24 +56,25 @@ nonisolated struct WebCaptureDocument: Sendable {
               let context = CGContext(consumer: consumer, mediaBox: nil, nil) else {
             throw WebCaptureError.invalidDocument
         }
+        var box = CGRect(origin: .zero, size: rect.size)
+        let boxData = Data(bytes: &box, count: MemoryLayout<CGRect>.size)
+        context.beginPDFPage([kCGPDFContextMediaBox as String: boxData] as CFDictionary)
         for (index, pageRect) in pageRects.enumerated() {
-            // Keep the same crop width on every page, including blank horizontal
-            // margins, so the reader does not change scale at page boundaries.
             let top = max(rect.minY, pageRect.minY)
             let bottom = min(rect.maxY, pageRect.maxY)
             guard bottom > top, let page = document.page(at: index + 1) else { continue }
-            var box = CGRect(x: 0, y: 0, width: rect.width, height: bottom - top)
-            let boxData = Data(bytes: &box, count: MemoryLayout<CGRect>.size)
-            context.beginPDFPage([kCGPDFContextMediaBox as String: boxData] as CFDictionary)
             context.saveGState()
-            context.clip(to: box)
-            context.translateBy(x: -rect.minX, y: -(pageRect.maxY - bottom))
+            // PDF coordinates start at the bottom. Clip each source to its own
+            // band so drawing outside its media box cannot cover a neighbour.
+            context.clip(to: CGRect(x: 0, y: rect.maxY - bottom,
+                                    width: rect.width, height: bottom - top))
+            context.translateBy(x: -rect.minX, y: rect.maxY - pageRect.maxY)
             context.concatenate(page.getDrawingTransform(.mediaBox,
                 rect: CGRect(origin: .zero, size: pageRect.size), rotate: 0, preserveAspectRatio: true))
             context.drawPDFPage(page)
             context.restoreGState()
-            context.endPDFPage()
         }
+        context.endPDFPage()
         context.closePDF()
         return output as Data
     }
