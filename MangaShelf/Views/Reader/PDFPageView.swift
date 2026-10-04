@@ -266,6 +266,18 @@ struct PDFPageView: UIViewRepresentable {
             isAnimatingScroll = false
         }
 
+        func scrollViewWillEndDragging(
+            _ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+            targetContentOffset: UnsafeMutablePointer<CGPoint>
+        ) {
+            let maxDrift = scrollView.bounds.height * 1.25
+            let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+            let currentY = scrollView.contentOffset.y
+            let proposedY = targetContentOffset.pointee.y
+            let limitedY = min(currentY + maxDrift, max(currentY - maxDrift, proposedY))
+            targetContentOffset.pointee.y = min(maxY, max(0, limitedY))
+        }
+
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             isAnimatingScroll = false
             flushPageReport()

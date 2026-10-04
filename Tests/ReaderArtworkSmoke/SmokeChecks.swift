@@ -184,6 +184,16 @@ func runReaderArtworkChecks() async throws -> String {
               && coordinator.reportedPage == doc.pageCount - 1,
               "Go to bottom reaches closing art and reports the final PDF page")
     try check(renderedViews.last?.alpha == 1, "Go to bottom updates artwork effect immediately")
+    coordinator.scrollToOffset(400)
+    var projectedOffset = CGPoint(x: 0, y: 2_000)
+    coordinator.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: 0, y: 10),
+                                          targetContentOffset: &projectedOffset)
+    try check(projectedOffset.y == 900, "Native flick projection is capped at 5/4 viewport height")
+    coordinator.scrollToOffset(900)
+    projectedOffset = CGPoint(x: 0, y: 0)
+    coordinator.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: 0, y: -10),
+                                          targetContentOffset: &projectedOffset)
+    try check(projectedOffset.y == 400, "Reverse native flick projection uses the same 5/4 viewport cap")
     coordinator.scrollToTop()
     try check(coordinator.reportedPage == 0, "Go to top retains original first page index")
     coordinator.loadDocument(doc, width: 300, artFolderURL: folder, restorePage: 0)
