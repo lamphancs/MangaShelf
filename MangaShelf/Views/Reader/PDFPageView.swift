@@ -35,6 +35,8 @@ struct PDFPageView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let scrollView = UIScrollView()
         scrollView.backgroundColor = UIColor(Color.appBackground)
+        // Keep native spring-back; the coordinator bounds Parallax edge travel.
+        scrollView.bounces = true
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.delegate = context.coordinator
@@ -99,6 +101,7 @@ struct PDFPageView: UIViewRepresentable {
         let coordinator = context.coordinator
         guard let scrollView = uiView as? UIScrollView else { return }
 
+        scrollView.bounces = true
         coordinator.contentView?.artworkTransition = artworkTransition
         coordinator.contentView?.updateViewport(scrollView.bounds)
 
@@ -134,6 +137,7 @@ struct PDFPageView: UIViewRepresentable {
         var isAnimatingScroll = false
         var reportedPage = 0
         var pendingRestoreOffset: CGFloat?
+        private var isLimitingEdgeBounce = false
         private var pageOffsets: [CGFloat] = []
         private var pageCount = 0
         private var documentLoadTask: Task<Void, Never>?
@@ -259,7 +263,20 @@ struct PDFPageView: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard pageCount > 0 else { return }
+            guard pageCount > 0, !isLimitingEdgeBounce else { return }
+            if contentView?.artworkTransition == .parallax {
+                // Retain a small native rubber-band region at BOTH ends instead of
+                // stopping at the exact edge. UIKit handles the short spring-back.
+                let allowance: CGFloat = 28
+                let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+                let y = scrollView.contentOffset.y
+                let boundedY = min(maxY + allowance, max(-allowance, y))
+                if boundedY != y {
+                    isLimitingEdgeBounce = true
+                    scrollView.contentOffset.y = boundedY
+                    isLimitingEdgeBounce = false
+                }
+            }
             let y = scrollView.contentOffset.y + scrollView.bounds.height * 0.3
             reportedPage = pageIndex(forViewportY: y)
 
