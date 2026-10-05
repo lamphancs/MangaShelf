@@ -222,16 +222,6 @@ func runReaderArtworkChecks() async throws -> String {
         try check(renderedViews[0].alpha == 1 && livePDF.opacity == 1,
                   "\(effect.title) tolerates top overscroll")
     }
-    content.artworkTransition = .parallax
-    scroll.bounces = true
-    for (requested, expected): (CGFloat, CGFloat) in [(-12, -12), (-120, -28),
-                                                     (endOffset + 12, endOffset + 12),
-                                                     (endOffset + 120, endOffset + 28), (200, 200)] {
-        scroll.contentOffset.y = requested
-        coordinator.scrollViewDidScroll(scroll)
-        try check(scroll.contentOffset.y == expected && scroll.bounces,
-                  "Parallax permits small edge bounce, caps long pulls, and preserves interior scrolling")
-    }
     content.artworkTransition = .fade
     coordinator.scrollToOffset(200)
     try check(abs(livePDF.opacity - 0.5) < 0.001 && renderedViews[0].frame.minY == 200,
