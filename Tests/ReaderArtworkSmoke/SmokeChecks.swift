@@ -222,6 +222,24 @@ func runReaderArtworkChecks() async throws -> String {
         try check(renderedViews[0].alpha == 1 && livePDF.opacity == 1,
                   "\(effect.title) tolerates top overscroll")
     }
+    // Hybrid must use the existing effects exactly, including reverse scrolling.
+    for (offset, index, reference): (CGFloat, Int, ArtworkTransition) in [
+        (0, 0, .parallax), (200, 0, .parallax), (400, 0, .parallax),
+        (endOffset - 400, 1, .continuous), (endOffset - 200, 1, .continuous),
+        (endOffset, 1, .continuous), (endOffset - 200, 1, .continuous), (200, 0, .parallax)
+    ] {
+        content.artworkTransition = reference
+        coordinator.scrollToOffset(offset)
+        let expectedFrame = renderedViews[index].frame
+        let expectedAlpha = renderedViews[index].alpha
+        let expectedStops = (renderedViews[index].layer.mask as! CAGradientLayer).locations
+        content.artworkTransition = .parallaxContinuous
+        coordinator.scrollToOffset(offset)
+        try check(renderedViews[index].frame == expectedFrame && renderedViews[index].alpha == expectedAlpha &&
+                  (renderedViews[index].layer.mask as! CAGradientLayer).locations == expectedStops &&
+                  livePDF.opacity == 1 && scroll.contentSize == previousSize,
+                  "Hybrid matches \(reference.title) at offset \(offset) without altering story or layout")
+    }
     content.artworkTransition = .fade
     coordinator.scrollToOffset(200)
     try check(abs(livePDF.opacity - 0.5) < 0.001 && renderedViews[0].frame.minY == 200,

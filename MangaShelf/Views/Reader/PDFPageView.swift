@@ -715,14 +715,11 @@ fileprivate class PDFContentView: UIView {
             let seam = opening ? height : closingY
             let view = artViews[index]
             var y = origin
-            switch artworkTransition {
-            case .parallax:
+            if artworkTransition == .parallax || (artworkTransition == .parallaxContinuous && opening) {
                 // Move 25% with the viewport: on screen the art travels at 75%
                 // of story speed and arrives at its original position at each end.
                 let travel = min(height, max(0, viewport.minY - (opening ? 0 : closingY - height)))
                 y += (travel - (opening ? 0 : height)) * 0.25
-            default:
-                break
             }
             view.frame = CGRect(x: 0, y: y, width: contentWidth, height: height)
             let visible = opening ? viewport.minY < seam : viewport.maxY > seam

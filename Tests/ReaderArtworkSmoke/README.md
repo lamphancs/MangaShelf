@@ -19,3 +19,5 @@ Reader flick checks verify UIKit's native deceleration remains enabled and its p
 Continuous transition checks cover opening/closing seams, fully opaque story content, reverse scrolling, unchanged geometry, and switching back to Fade.
 
 Parallax checks cover distinct motion and seam widths, opening/closing endpoints, ordered mask stops, reverse scrolling, overscroll, and preserved story opacity and layout.
+
+Hybrid checks compare Parallax + Continuous against the original opening Parallax and closing Continuous effects across endpoints, partial scrolls, and reverse scrolling.

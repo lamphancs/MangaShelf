@@ -29,6 +29,7 @@ enum ArtworkTransition: String, CaseIterable, Identifiable {
     case fade
     case continuous
     case parallax
+    case parallaxContinuous
 
     var id: String { rawValue }
     var title: String {
@@ -36,6 +37,7 @@ enum ArtworkTransition: String, CaseIterable, Identifiable {
         case .fade: "Fade"
         case .continuous: "Continuous"
         case .parallax: "Parallax"
+        case .parallaxContinuous: "Parallax + Continuous"
         }
     }
     var symbol: String {
@@ -43,6 +45,7 @@ enum ArtworkTransition: String, CaseIterable, Identifiable {
         case .fade: "circle.lefthalf.filled"
         case .continuous: "arrow.down"
         case .parallax: "square.3.layers.3d"
+        case .parallaxContinuous: "arrow.triangle.branch"
         }
     }
     var description: String {
@@ -50,6 +53,7 @@ enum ArtworkTransition: String, CaseIterable, Identifiable {
         case .fade: "Artwork stays in place and fades into the story as you scroll."
         case .continuous: "Artwork and story scroll together, joined by a soft edge."
         case .parallax: "Artwork scrolls a little slower than the story for a gentle sense of depth."
+        case .parallaxContinuous: "Parallax at the beginning, continuous scrolling at the end."
         }
     }
 }
