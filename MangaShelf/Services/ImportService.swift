@@ -296,6 +296,34 @@ final class ImportService {
         return target
     }
 
+    // MARK: - Delete Chapter
+
+    /// Removes a chapter PDF from disk, then re-syncs the series so chapter indices,
+    /// the current chapter, and bookmarks are remapped (bookmarks on the deleted chapter are dropped).
+    @MainActor
+    func deleteChapter(_ chapter: Chapter, from book: Book, modelContext: ModelContext) async throws {
+        guard book.isSeries, let folderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        let (rootURL, _) = try LocalFileService.shared.resolveBookmark(bookmarkData)
+        guard rootURL.startAccessingSecurityScopedResource() else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let folderURL = rootURL.appendingPathComponent(folderName)
+        let fileURL = chapter.pdfURL(folderURL: folderURL)
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            try FileManager.default.removeItem(at: fileURL)
+        }
+
+        try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
+        book.folderSignature = folderSignature(at: folderURL)
+        try modelContext.save()
+        await BookDataService.shared.save(book: book, seriesFolderURL: folderURL)
+    }
+
     // MARK: - Rename
 
     func renameBook(_ book: Book, to newTitle: String, modelContext: ModelContext) async throws {

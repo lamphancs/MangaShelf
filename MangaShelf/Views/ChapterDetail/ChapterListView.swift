@@ -34,6 +34,7 @@ struct ChapterListView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var artViewerItem: ArtViewerItem?
     @State private var coverDisplayIndex: Int = 0
+    @State private var deleteErrorMessage: String?
 
     private struct ArtViewerItem: Identifiable {
         let id = UUID()
@@ -122,6 +123,17 @@ struct ChapterListView: View {
                     openArtFolder()
                 }
             )
+        }
+        .alert(
+            "Couldn't Delete Chapter",
+            isPresented: Binding(
+                get: { deleteErrorMessage != nil },
+                set: { if !$0 { deleteErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "")
         }
         .onChange(of: selectedPhotoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
@@ -555,6 +567,14 @@ struct ChapterListView: View {
                             Label("Remove Bookmark", systemImage: "bookmark.slash")
                         }
                     }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        Task { await deleteChapter(chapter) }
+                    } label: {
+                        Label("Delete Chapter", systemImage: "trash")
+                    }
                 }
 
                 if displayIndex < allChapters.count - 1 {
@@ -579,6 +599,17 @@ struct ChapterListView: View {
             if !hasEnglishFolder { showEnglish = false }
         } catch {
             print("Failed to sync chapters: \(error.localizedDescription)")
+        }
+    }
+
+    private func deleteChapter(_ chapter: Chapter) async {
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            try await ImportService().deleteChapter(chapter, from: book, modelContext: modelContext)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            deleteErrorMessage = error.localizedDescription
         }
     }
 
