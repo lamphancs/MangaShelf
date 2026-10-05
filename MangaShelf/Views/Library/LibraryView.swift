@@ -25,6 +25,7 @@ struct LibraryView: View {
     @State private var browseAfterCreation = false
     @State private var bookForCapture: Book?
     @State private var bookForCoverPick: Book?
+    @State private var seriesForRename: Book?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showPhotoPicker = false
     @AppStorage(StorageKey.libraryViewMode) private var viewMode: LibraryViewMode = .grid
@@ -72,7 +73,7 @@ struct LibraryView: View {
                                             }
                                         },
                                         onRename: {
-                                            viewModel.showRename(for: book)
+                                            startRename(book)
                                         },
                                         onSetCover: {
                                             bookForCoverPick = book
@@ -99,7 +100,7 @@ struct LibraryView: View {
                                             }
                                         },
                                         onRename: {
-                                            viewModel.showRename(for: book)
+                                            startRename(book)
                                         },
                                         onSetCover: {
                                             bookForCoverPick = book
@@ -233,6 +234,9 @@ struct LibraryView: View {
             } message: {
                 Text("Enter a new title for this book")
             }
+            .sheet(item: $seriesForRename) { book in
+                SeriesRenameSheet(book: book)
+            }
             .fullScreenCover(item: $selectedBook) { book in
                 ReaderView(book: book)
             }
@@ -254,6 +258,15 @@ struct LibraryView: View {
             if newPhase == .active {
                 Task { await viewModel.quickRefresh(modelContext: modelContext) }
             }
+        }
+    }
+
+    /// Series rename both the title and the folder on disk; single PDFs rename the title only.
+    private func startRename(_ book: Book) {
+        if book.isSeries, book.folderName != nil {
+            seriesForRename = book
+        } else {
+            viewModel.showRename(for: book)
         }
     }
 

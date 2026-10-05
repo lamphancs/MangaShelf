@@ -17,8 +17,12 @@ struct NewSeriesDraft {
         return value.isEmpty ? trimmedTitle : value
     }
     var detailsAreValid: Bool {
-        let name = resolvedFolderName
-        return !trimmedTitle.isEmpty && !name.isEmpty && !name.hasPrefix(".")
+        !trimmedTitle.isEmpty && Self.isValidFolderName(resolvedFolderName)
+    }
+
+    /// Folder names must be non-empty, visible (no leading dot), and a single path component.
+    static func isValidFolderName(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix(".")
             && !name.contains("/") && !name.contains(":")
             && name.rangeOfCharacter(from: .controlCharacters) == nil
     }

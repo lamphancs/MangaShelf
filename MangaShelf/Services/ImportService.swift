@@ -332,6 +332,63 @@ final class ImportService {
         await BookDataService.shared.save(book: book)
     }
 
+    /// Renames a series' display title and, when the name differs, its folder on disk.
+    /// Progress, bookmarks, notes, and the cover live in `<folder>/.mangashelf/`, so they
+    /// move with the folder. Every other folder path is derived from `book.folderName`.
+    @MainActor
+    func renameSeries(_ book: Book, title: String, folderName: String, modelContext: ModelContext) async throws {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newFolderName = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, NewSeriesDraft.isValidFolderName(newFolderName) else {
+            throw NewSeriesError.invalidDetails
+        }
+        guard book.isSeries, let oldFolderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        let (rootURL, _) = try LocalFileService.shared.resolveBookmark(bookmarkData)
+        guard rootURL.startAccessingSecurityScopedResource() else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let fm = FileManager.default
+        let oldURL = rootURL.appendingPathComponent(oldFolderName, isDirectory: true)
+        let newURL = rootURL.appendingPathComponent(newFolderName, isDirectory: true)
+        let movesFolder = newFolderName != oldFolderName
+        if movesFolder {
+            // A case-only rename resolves to the same folder on case-insensitive volumes.
+            let isCaseOnly = newFolderName.caseInsensitiveCompare(oldFolderName) == .orderedSame
+            if !isCaseOnly, fm.fileExists(atPath: newURL.path) { throw NewSeriesError.folderExists }
+            // `moveItem` never overwrites an existing item.
+            try fm.moveItem(at: oldURL, to: newURL)
+        }
+
+        let oldTitle = book.title
+        book.title = title
+        if movesFolder {
+            book.folderName = newFolderName
+            book.filename = newFolderName
+            book.filePath = newFolderName
+            book.folderSignature = folderSignature(at: newURL)
+        }
+        do {
+            try modelContext.save()
+        } catch {
+            // Keep disk and library in agreement: undo the move if the row can't be saved.
+            book.title = oldTitle
+            if movesFolder {
+                try? fm.moveItem(at: newURL, to: oldURL)
+                book.folderName = oldFolderName
+                book.filename = oldFolderName
+                book.filePath = oldFolderName
+                book.folderSignature = folderSignature(at: oldURL)
+            }
+            throw error
+        }
+        await BookDataService.shared.save(book: book, seriesFolderURL: movesFolder ? newURL : oldURL)
+    }
+
     // MARK: - Cover
 
     /// Sets a custom cover for a series. The JPEG is written into
