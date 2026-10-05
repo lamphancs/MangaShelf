@@ -29,8 +29,7 @@ struct ChapterListView: View {
     @State private var editingLink: BookLinkKind?
     @State private var showEditSeriesNote = false
     @State private var showInfoBox = false
-    @State private var showLinkActions = false
-    @State private var actionLinkKind: BookLinkKind = .series
+    @State private var actionLinkKind: BookLinkKind?
     @State private var pendingCapture: CaptureLink?
     @State private var captureURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
@@ -101,13 +100,13 @@ struct ChapterListView: View {
         .sheet(isPresented: $showEditSeriesNote) {
             SeriesNoteEditorSheet(book: book)
         }
-        .sheet(isPresented: $showLinkActions, onDismiss: {
+        .sheet(item: $actionLinkKind, onDismiss: {
             if let link = pendingCapture {
                 pendingCapture = nil
                 captureURL = link
             }
-        }) {
-            linkActionsSheet
+        }) { kind in
+            linkActionsSheet(kind)
         }
         .fullScreenCover(item: $captureURL, onDismiss: {
             Task {
@@ -451,7 +450,6 @@ struct ChapterListView: View {
                 guard let url else { editingLink = kind; return }
                 if kind != .latestChapter {
                     actionLinkKind = kind
-                    showLinkActions = true
                 } else {
                     captureURL = CaptureLink(url: url)
                 }
@@ -474,9 +472,9 @@ struct ChapterListView: View {
 
     // MARK: - Link Actions
 
-    private var linkActionsSheet: some View {
+    private func linkActionsSheet(_ kind: BookLinkKind) -> some View {
         VStack(spacing: 0) {
-            if let urlString = book[keyPath: actionLinkKind.urlKeyPath], !urlString.isEmpty,
+            if let urlString = book[keyPath: kind.urlKeyPath], !urlString.isEmpty,
                let url = URL(string: urlString) {
 
                 Text(url.host ?? urlString)
@@ -486,13 +484,13 @@ struct ChapterListView: View {
                     .padding(.bottom, 12)
 
                 linkActionRow(icon: "safari", title: "Open in Safari") {
-                    showLinkActions = false
+                    actionLinkKind = nil
                     UIApplication.shared.open(url)
                 }
 
                 if let chromeURL = chromeURL(from: url) {
                     linkActionRow(icon: "globe", title: "Open in Chrome") {
-                        showLinkActions = false
+                        actionLinkKind = nil
                         UIApplication.shared.open(chromeURL)
                     }
                 }
@@ -502,15 +500,15 @@ struct ChapterListView: View {
 
                 if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     linkActionRow(icon: "camera.viewfinder", title: "Browse & Capture") {
-                        pendingCapture = CaptureLink(url: url, isEnglish: actionLinkKind == .englishSeries)
-                        showLinkActions = false
+                        pendingCapture = CaptureLink(url: url, isEnglish: kind == .englishSeries)
+                        actionLinkKind = nil
                     }
                 }
 
                 linkActionRow(icon: "doc.on.doc", title: "Copy Link") {
                     UIPasteboard.general.string = urlString
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    showLinkActions = false
+                    actionLinkKind = nil
                 }
             }
         }
