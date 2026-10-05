@@ -79,9 +79,19 @@ nonisolated struct WebCaptureDocument: Sendable {
         return output as Data
     }
 
-    /// Repack PDF objects with PDFKit's lossy image options explicitly disabled.
-    /// Already-efficient source data wins if rewriting would increase its size.
     func exportPDF(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> Data {
+        try exportResult(crop: crop).data
+    }
+
+    /// Repair image joins only within the byte budget of the existing native export.
+    /// Stronger lossless compression funds the small repair bands without enlarging
+    /// the file or recompressing the chapter's JPEG images.
+    func exportResult(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> PDFSeamRepair.Result {
+        try PDFSeamRepair.export(nativeExportPDF(crop: crop))
+    }
+
+    /// Baseline export, with PDFKit's lossy image options explicitly disabled.
+    private func nativeExportPDF(crop: CGRect) throws -> Data {
         let original = try pdfData(crop: crop)
         guard let pdf = PDFDocument(data: original),
               let compact = pdf.dataRepresentation(options: [

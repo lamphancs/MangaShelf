@@ -43,3 +43,15 @@ have no dark line at that join; fractional clipping against an embedded dark fil
 causes the hairline. This is a display fix, not a rewrite of exported PDFs. At higher
 zoom, a real subpixel gap in the PDF can still occupy a full pixel; external viewers
 retain their own rendering behavior.
+
+Export regression follow-up: the optional private-file run also writes
+`seam-export.pdf` and `seam-export-preview.png`, checks that export does not grow,
+retains text and dimensions, and has no gutter hairline with default PDFKit smoothing
+at 1x through 4x. The 2026-10-04 Chapter 2 run passed 212 checks. The baseline suite
+also verifies link retention, a lossless image-stream round-trip, cancellation, and
+an explicit fallback when there is not enough compression savings to fund repairs.
+
+A local Mac benchmark of 48 warmed 1290x1152-pixel bands from Chapter 2 measured
+median PDFKit/Core Graphics render times of 52.11/52.15 ms (means 50.93/50.77 ms).
+This is a bitmap-render benchmark, not physical-iPhone FPS or a scrolling guarantee.
+The renderer change leaves cache/prefetch/tile sizes and UIKit scrolling unchanged.

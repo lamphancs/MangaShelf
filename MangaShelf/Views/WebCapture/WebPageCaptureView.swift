@@ -25,6 +25,7 @@ struct WebPageCaptureView: View {
     @State private var filenameInput = ""
     @State private var pendingSaveToSeries = true
     @State private var savedDescription: String?
+    @State private var exportNotice: String?
     @State private var showSaveSuccess = false
     @State private var sharedLink: SharedBookLink?
     @State private var addressInput: String
@@ -310,6 +311,11 @@ struct WebPageCaptureView: View {
 
     private var cropControls: some View {
         VStack(spacing: 12) {
+            if let exportNotice {
+                Text(exportNotice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let warning = model.captureWarning {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -385,7 +391,7 @@ struct WebPageCaptureView: View {
         .background(theme.cardBackground)
         .overlay(alignment: .top) { Divider() }
         .disabled(isExporting)
-        .onChange(of: crop) { _, _ in saved = false; savedDescription = nil }
+        .onChange(of: crop) { _, _ in saved = false; savedDescription = nil; exportNotice = nil }
     }
 
     private var saveSuccessDialog: some View {
@@ -400,6 +406,12 @@ struct WebPageCaptureView: View {
                         .font(.subheadline)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
+                    if let exportNotice {
+                        Text(exportNotice)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                     VStack(spacing: 12) {
                         Button {
                             advanceToNextChapter(automaticallyCapture: false)
@@ -451,6 +463,7 @@ struct WebPageCaptureView: View {
         crop = CGRect(x: 0, y: 0, width: 1, height: 1)
         saved = false
         savedDescription = nil
+        exportNotice = nil
         filenameInput = ""
         overview = true
     }
@@ -467,13 +480,23 @@ struct WebPageCaptureView: View {
         let sourceURL = model.capturedPageURL
         let chapterTitle = model.suggestedFilename
         isExporting = true
+        exportNotice = nil
         exportTask = Task {
             defer { isExporting = false }
             do {
-                let data = try await Task.detached(priority: .userInitiated) {
-                    try document.exportPDF(crop: selection)
-                }.value
+                let worker = Task.detached(priority: .userInitiated) {
+                    try document.exportResult(crop: selection)
+                }
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
                 try Task.checkCancellation()
+                let data = result.data
+                if result.skippedForSize {
+                    exportNotice = "Kept the smaller PDF. Some seams may still appear in other viewers."
+                }
                 if saveToSeries {
                     let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: sourceURL, chapterTitle: chapterTitle, isEnglish: isEnglish, modelContext: modelContext)
                     savedDescription = "\(isEnglish ? "EN/" : "")\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"

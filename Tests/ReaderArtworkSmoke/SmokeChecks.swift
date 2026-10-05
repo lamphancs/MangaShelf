@@ -377,6 +377,36 @@ func runReaderArtworkChecks() async throws -> String {
     try check(rgb(preview, x: 450, y: 299).prefix(3).allSatisfy { $0 > 245 },
               "Capture preview uses the same seam-free rasterization as the reader")
     clippedContent.clearContent()
+    let budgeted = try PDFSeamRepair.export(seamData)
+    try check(budgeted.data.count <= seamData.count + PDFSeamRepair.repairSizeAllowance,
+              "Seam repair grows a PDF by at most the size allowance")
+    try check(budgeted.repaired || budgeted.skippedForSize,
+              "Recognized image joins either receive a repair or report the size fallback")
+    let linked = PDFDocument(data: seamData)!
+    let link = PDFAnnotation(bounds: CGRect(x: 20, y: 20, width: 80, height: 30), forType: .link, withProperties: nil)
+    link.url = URL(string: "https://example.com/chapter")!
+    linked.page(at: 0)!.addAnnotation(link)
+    var linkedData = linked.dataRepresentation()!
+    linkedData.append(Data(repeating: 32, count: 20_000))
+    let repairedLink = try PDFSeamRepair.export(linkedData)
+    try check(repairedLink.repaired && repairedLink.data.count <= linkedData.count,
+              "Repair uses available lossless savings rather than increasing the byte budget")
+    let linkedResult = PDFDocument(data: repairedLink.data)!
+    try check(linkedResult.page(at: 0)!.annotations.first?.url == link.url,
+              "Repair retains link annotations in the original PDF object graph")
+    let repackedSeam = try PDFLosslessWriter.compact(seamData)
+    let repackedPreview = try WebCaptureDocument(data: repackedSeam).render(pixelWidth: 600)
+    let originalPreview = try WebCaptureDocument(data: seamData).render(pixelWidth: 600)
+    try check((repackedPreview.cgImage!.dataProvider!.data! as Data)
+              == (originalPreview.cgImage!.dataProvider!.data! as Data),
+              "Lossless stream compression preserves all fixture pixels")
+    let cancelledExport = Task.detached {
+        while !Task.isCancelled { await Task.yield() }
+        return try PDFSeamRepair.export(seamData)
+    }
+    cancelledExport.cancel()
+    do { _ = try await cancelledExport.value; try check(false, "Export cancellation is honored") }
+    catch is CancellationError { try check(true, "Export cancellation is honored") }
     let top = rgb(captured, x: 150, y: 10)
     let lower = rgb(captured, x: 150, y: 100)
     try check(top[1] > 240 && top[0] < 15 && lower[0] > 240 && lower[1] < 15,
@@ -476,6 +506,39 @@ func runReaderArtworkChecks() async throws -> String {
             for delta: CGFloat in [-1, -0.5, 0, 0.5, 1] {
                 try check(rgb(shot, x: pixelWidth * 0.05, y: (120 + delta) * ratio).prefix(3).allSatisfy { $0 > 245 },
                           "Private chapter's capture preview stays white at \(pixelWidth) pixels")
+            }
+        }
+        let exported = try captureDocument.exportResult()
+        try check(exported.repaired && !exported.skippedForSize,
+                  "Private chapter receives seam repair within its original byte budget")
+        try check(exported.data.count <= data.count,
+                  "Private chapter export shrinks: \(data.count) -> \(exported.data.count)")
+        try exported.data.write(to: documents.appendingPathComponent("seam-export.pdf"))
+        let exportedPDF = PDFDocument(data: exported.data)!
+        try check(exportedPDF.string == document.string,
+                  "Seam repair preserves the chapter's searchable PDF text")
+        try check(exportedPDF.pageCount == document.pageCount
+                  && exportedPDF.page(at: 0)!.bounds(for: .mediaBox).size == sourceSize,
+                  "Seam repair preserves the chapter's dimensions and page count")
+        for scale: CGFloat in [1, 2, 3, 4] {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            format.opaque = true
+            let external = UIGraphicsImageRenderer(size: CGSize(width: sourceSize.width, height: 240), format: format).image { context in
+                UIColor.white.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: sourceSize.width, height: 240))
+                let cg = context.cgContext
+                cg.translateBy(x: 0, y: 120 + sourceSize.height - seamY)
+                cg.scaleBy(x: 1, y: -1)
+                // Deliberately use PDFKit's default smoothing, as external viewers do.
+                exportedPDF.page(at: 0)!.draw(with: .mediaBox, to: cg)
+            }
+            for delta: CGFloat in [-1, -0.5, 0, 0.5, 1] {
+                try check(rgb(external, x: sourceSize.width * 0.05, y: 120 + delta).prefix(3).allSatisfy { $0 > 245 },
+                          "Exported seam stays white with PDFKit smoothing at \(scale)x")
+            }
+            if scale == 3 {
+                try external.pngData()!.write(to: documents.appendingPathComponent("seam-export-preview.png"))
             }
         }
     }

@@ -43,3 +43,23 @@ Next-chapter/default-crop checks cover explicit link detection, ambiguous and se
 Information link checks: metadata regression covers legacy JSON, both saved links with a decimal chapter number, capture-save preservation, and removal of only the latest link. On device, verify compact notes (short, multiline, trailing blank lines), edit both links, and confirm hidden URLs display as the book title and Chapter number. The first link opens the action menu; the chapter opens Browse & Capture directly. Navigate to a different chapter, use the toolbar share menu, choose each destination, verify the current URL is prefilled, edit/cancel/save, close, and reopen. Verify persistence in both main and secret libraries and after a folder reimport.
 
 Capture-save link regression now verifies automatic replacement with the captured URL and chapter number (URL takes priority over conflicting title/filename), portable JSON persistence, unchanged series link, and preservation of the latest link after invalid PDF failure. Note editor visual check: a separate in-memory fixture confirms a compact sheet and automatic keyboard focus with a short note.
+
+Size-capped seam export (2026-10-04): `exportPDF` now scans full-width touching image
+regions, including rectangular clips at source-page boundaries. It overlays only
+approximately two PDF points around each join at 3x, then applies stronger lossless
+Flate compression. It preserves the original image streams, text, links/annotations,
+page dimensions, and metadata; it does not flatten the whole chapter or JPEG-reencode
+its artwork. A repaired candidate is accepted only if it is at most 5 MB larger than the
+previous native export. Otherwise the smaller native/losslessly compacted PDF is
+kept and the save/share UI explains that seams may remain in other viewers.
+Complex clips, nested Form XObjects, rotated pages, and non-full-width image layouts
+are conservatively skipped. The narrow repair bands have fixed raster detail at
+high zoom even though the original image resources remain intact.
+
+The reader smoke suite now also covers lossless stream round-trips, link annotations,
+size-budget fallback, cancellation, and an optional real-file export check using
+PDFKit's default smoothing at 1x/2x/3x/4x. Run with `READER_SEAM_PDF` and `READER_SEAM_Y`
+as documented in `Tests/ReaderArtworkSmoke/README.md`. The private Chapter 2 repro
+shrunk from 52,525,600 to 50,898,045 bytes with 13 repair bands. All original decoded
+image data and text were retained. All 13 boundary crops at 3x matched the reader's
+seam-free rendering pixel-for-pixel. The unmodified and final PDFs were not committed.
