@@ -35,8 +35,10 @@ final class Chapter {
         self.lastReadPage = lastReadPage
     }
 
+    var isEnglish: Bool { filename.hasPrefix("EN/") }
+
     var displayName: String {
-        var name = filename
+        var name = (filename as NSString).lastPathComponent
         if let lastDot = name.lastIndex(of: ".") {
             name = String(name[..<lastDot])
         }

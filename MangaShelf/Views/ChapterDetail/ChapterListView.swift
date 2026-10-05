@@ -15,6 +15,8 @@ struct ChapterListView: View {
     @Environment(ThemeManager.self) private var theme
     let book: Book
 
+    @State private var showEnglish = false
+    @State private var hasEnglishFolder = false
     @State private var showReader = false
     @State private var isSyncing = false
     @State private var coverImage: UIImage?
@@ -72,6 +74,7 @@ struct ChapterListView: View {
                     .padding(.bottom, 40)
             }
         }
+        .refreshable { await syncChapters() }
         .background(theme.libraryBackground)
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -308,10 +311,10 @@ struct ChapterListView: View {
     private var actionButtons: some View {
         HStack(spacing: 0) {
             Button {
-                book.currentChapterIndex = 0
-                if let firstChapter = book.sortedChapters.first {
-                    firstChapter.lastReadPage = 0
-                }
+                guard let firstChapter = languageChapters.first else { return }
+                book.currentChapterIndex = firstChapter.sortOrder
+                firstChapter.lastReadPage = 0
+                firstChapter.lastReadOffset = 0
                 try? modelContext.save()
                 showReader = true
             } label: {
@@ -334,6 +337,9 @@ struct ChapterListView: View {
                 .padding(.vertical, 10)
 
             Button {
+                guard let chapter = resumeChapter else { return }
+                book.currentChapterIndex = chapter.sortOrder
+                try? modelContext.save()
                 showReader = true
             } label: {
                 VStack(spacing: 5) {
@@ -342,7 +348,7 @@ struct ChapterListView: View {
                         .foregroundColor(theme.accent)
 
                     if book.readingProgress > 0,
-                       let chapter = book.sortedChapters[safe: book.currentChapterIndex] {
+                       let chapter = resumeChapter {
                         Text(chapter.displayName)
                             .font(.caption2)
                             .fontWeight(.semibold)
@@ -359,6 +365,8 @@ struct ChapterListView: View {
                 .padding(.vertical, 14)
             }
         }
+        .disabled(isSyncing || languageChapters.isEmpty)
+        .opacity(languageChapters.isEmpty ? 0.5 : 1)
         .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -537,11 +545,27 @@ struct ChapterListView: View {
 
     // MARK: - Chapters Header
 
+    private var languageChapters: [Chapter] {
+        book.sortedChapters.filter { $0.isEnglish == showEnglish }
+    }
+
+    private var resumeChapter: Chapter? {
+        languageChapters.first { $0.sortOrder == book.currentChapterIndex } ?? languageChapters.first
+    }
+
     private var chaptersHeader: some View {
         HStack {
             Text("Chapters")
                 .font(.headline)
                 .foregroundColor(.white)
+            Picker("Chapter language", selection: $showEnglish) {
+                Text("VN").tag(false)
+                Text("EN").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 110)
+            .disabled(!hasEnglishFolder || isSyncing)
+            .accessibilityHint(hasEnglishFolder ? "Switch chapter language" : "EN folder is unavailable")
             Spacer()
             Button {
                 sortAscending.toggle()
@@ -561,15 +585,23 @@ struct ChapterListView: View {
     // MARK: - Chapter List
 
     private var chapterList: some View {
-        let allChapters = book.sortedChapters
+        let allChapters = languageChapters
         let displayChapters = sortAscending ? allChapters : allChapters.reversed()
 
         return LazyVStack(spacing: 0) {
+            if allChapters.isEmpty {
+                Text(showEnglish ? "No English chapters" : "No Vietnamese chapters")
+                    .font(.subheadline)
+                    .foregroundColor(.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+            }
             ForEach(Array(displayChapters.enumerated()), id: \.element.id) { displayIndex, chapter in
-                let originalIndex = sortAscending ? displayIndex : (allChapters.count - 1 - displayIndex)
+                let originalIndex = chapter.sortOrder
                 Button {
                     book.currentChapterIndex = originalIndex
                     chapter.lastReadPage = 0
+                    chapter.lastReadOffset = 0
                     try? modelContext.save()
                     showReader = true
                 } label: {
@@ -614,7 +646,8 @@ struct ChapterListView: View {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext)
+            hasEnglishFolder = try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext)
+            if !hasEnglishFolder { showEnglish = false }
         } catch {
             print("Failed to sync chapters: \(error.localizedDescription)")
         }
@@ -827,7 +860,7 @@ struct ChapterListView: View {
         let userBookmark = bookmarkFor(index: index)
 
         return HStack(spacing: 14) {
-            Text("\(index + 1)")
+            Text("\((languageChapters.firstIndex { $0.id == chapter.id } ?? 0) + 1)")
                 .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundColor(isCurrentChapter ? theme.accent : .tertiaryText)

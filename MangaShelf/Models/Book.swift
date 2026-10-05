@@ -137,9 +137,11 @@ final class Book {
     /// Reading progress as a percentage (0.0 to 1.0)
     var readingProgress: Double {
         if isSeries {
-            let count = chapters?.count ?? 0
-            guard count > 0 else { return 0.0 }
-            return Double(currentChapterIndex) / Double(count)
+            let allChapters = sortedChapters
+            guard let current = allChapters[safe: currentChapterIndex] else { return 0.0 }
+            let languageChapters = allChapters.filter { $0.isEnglish == current.isEnglish }
+            let index = languageChapters.firstIndex { $0.id == current.id } ?? 0
+            return Double(index) / Double(languageChapters.count)
         }
         guard totalPages > 0 else { return 0.0 }
         return Double(lastReadPage) / Double(totalPages)

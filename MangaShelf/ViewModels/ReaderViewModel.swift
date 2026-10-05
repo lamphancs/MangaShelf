@@ -91,9 +91,11 @@ final class ReaderViewModel {
         }
 
         if book.isSeries {
-            let chapters = book.sortedChapters
+            let allChapters = book.sortedChapters
+            let selected = allChapters[safe: book.currentChapterIndex] ?? allChapters.first
+            let chapters = allChapters.filter { $0.isEnglish == (selected?.isEnglish ?? false) }
             self.sortedChapters = chapters
-            let chapterIdx = chapters.isEmpty ? 0 : min(book.currentChapterIndex, chapters.count - 1)
+            let chapterIdx = chapters.firstIndex { $0.id == selected?.id } ?? 0
             self.currentChapterIndex = chapterIdx
 
             if let rootURL = resolvedRoot {
@@ -157,8 +159,12 @@ final class ReaderViewModel {
 
     // MARK: - Bookmarks
 
+    private var storedChapterIndex: Int {
+        book.sortedChapters.firstIndex { $0.id == currentChapter?.id } ?? 0
+    }
+
     var currentBookmark: Bookmark? {
-        book.bookmarks?.first { $0.chapterIndex == currentChapterIndex }
+        book.bookmarks?.first { $0.chapterIndex == storedChapterIndex }
     }
 
     var canBookmarkCurrentChapter: Bool {
@@ -193,7 +199,7 @@ final class ReaderViewModel {
             bookmark.colorName = color.rawValue
         } else {
             let bookmark = Bookmark(
-                chapterIndex: currentChapterIndex,
+                chapterIndex: storedChapterIndex,
                 note: note.trimmingCharacters(in: .whitespacesAndNewlines),
                 colorName: color.rawValue
             )
@@ -312,7 +318,7 @@ final class ReaderViewModel {
 
             currentChapterIndex = index
             pdfDocument = doc
-            book.currentChapterIndex = currentChapterIndex
+            book.currentChapterIndex = storedChapterIndex
             book.lastReadDate = Date()
             try? modelContext.save()
 
@@ -331,7 +337,7 @@ final class ReaderViewModel {
                 chapter.lastReadPage = currentPage
                 if let offset { chapter.lastReadOffset = Double(offset) }
             }
-            book.currentChapterIndex = currentChapterIndex
+            book.currentChapterIndex = storedChapterIndex
         } else {
             book.lastReadPage = currentPage
             if let offset { book.lastReadOffset = Double(offset) }

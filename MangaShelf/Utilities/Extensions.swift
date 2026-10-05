@@ -128,7 +128,7 @@ extension Book {
     func chapterProgressLabel() -> String {
         let chapters = sortedChapters
         let currentChapter = chapters[safe: currentChapterIndex]
-        let lastChapter = chapters.last
+        let lastChapter = chapters.last { $0.isEnglish == (currentChapter?.isEnglish ?? false) }
         let currentNum = currentChapter?.extractedNumber ?? "\(currentChapterIndex + 1)"
         let lastNum = lastChapter?.extractedNumber ?? "\(chapters.count)"
         return "Ch. \(currentNum)/\(lastNum)"

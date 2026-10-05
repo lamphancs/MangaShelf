@@ -191,9 +191,10 @@ final class ImportService {
     // MARK: - Sync Series From Root
 
     /// Sync a single series by resolving the root folder bookmark
-    func syncSeriesFromRoot(_ book: Book, modelContext: ModelContext) async throws {
-        guard book.isSeries, let folderName = book.folderName else { return }
-        guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else { return }
+    @discardableResult
+    func syncSeriesFromRoot(_ book: Book, modelContext: ModelContext) async throws -> Bool {
+        guard book.isSeries, let folderName = book.folderName else { return false }
+        guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else { return false }
 
         let (rootURL, _) = try LocalFileService.shared.resolveBookmark(bookmarkData)
 
@@ -207,6 +208,7 @@ final class ImportService {
         await refreshCustomCover(for: book, folderURL: folderURL)
         book.folderSignature = folderSignature(at: folderURL)
         try modelContext.save()
+        return Self.hasEnglishFolder(in: folderURL)
     }
 
     // MARK: - Captured Chapters
@@ -329,10 +331,7 @@ final class ImportService {
 
     private func createSeries(from folderURL: URL, isSecret: Bool = false, modelContext: ModelContext) async throws {
         let fm = FileManager.default
-        let contents = try fm.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil)
-        let pdfFiles = contents
-            .filter { $0.pathExtension.lowercased() == "pdf" }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let pdfFiles = try Self.chapterFiles(in: folderURL)
 
         guard !pdfFiles.isEmpty || fm.fileExists(atPath: BookDataService.dataFileURL(in: folderURL).path) else { return }
 
@@ -345,7 +344,7 @@ final class ImportService {
         let cachedPageCounts = seriesData?.chapterPageCounts ?? [:]
 
         for (index, pdfFile) in pdfFiles.enumerated() {
-            let filename = pdfFile.lastPathComponent
+            let filename = Self.chapterFilename(pdfFile, in: folderURL)
             // Cached count from data.json avoids re-opening every PDF on every scan
             // (a major scan-time cost on libraries with many chapters).
             let pageCount = cachedPageCounts[filename] ?? thumbnailService.getPageCount(for: pdfFile)
@@ -453,18 +452,20 @@ final class ImportService {
     // MARK: - Private: Sync Chapters
 
     private func syncChapters(_ book: Book, folderURL: URL, modelContext: ModelContext) async throws {
-        let fm = FileManager.default
-        let contents = try fm.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil)
-        let pdfFiles = contents
-            .filter { $0.pathExtension.lowercased() == "pdf" }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let pdfFiles = try Self.chapterFiles(in: folderURL)
 
         let existingChapters = book.sortedChapters
         let existingByFilename = Dictionary(
             existingChapters.map { ($0.filename, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let currentFilenames = Set(pdfFiles.map { $0.lastPathComponent })
+        let filenames = pdfFiles.map { Self.chapterFilename($0, in: folderURL) }
+        let currentFilenames = Set(filenames)
+        let currentFilename = existingChapters[safe: book.currentChapterIndex]?.filename
+        let bookmarkedFilenames = (book.bookmarks ?? []).compactMap { bookmark -> (Bookmark, String)? in
+            guard let chapter = existingChapters[safe: bookmark.chapterIndex] else { return nil }
+            return (bookmark, chapter.filename)
+        }
 
         for chapter in existingChapters {
             if !currentFilenames.contains(chapter.filename) {
@@ -476,7 +477,7 @@ final class ImportService {
         var totalSizeAll: Int64 = 0
 
         for (index, pdfFile) in pdfFiles.enumerated() {
-            let filename = pdfFile.lastPathComponent
+            let filename = Self.chapterFilename(pdfFile, in: folderURL)
             if let existing = existingByFilename[filename] {
                 existing.sortOrder = index
                 if existing.totalPages == 0 {
@@ -496,8 +497,14 @@ final class ImportService {
         book.totalPages = totalPagesAll
         book.fileSize = totalSizeAll
 
-        if book.currentChapterIndex >= pdfFiles.count {
-            book.currentChapterIndex = max(0, pdfFiles.count - 1)
+        book.currentChapterIndex = currentFilename.flatMap { filenames.firstIndex(of: $0) }
+            ?? min(book.currentChapterIndex, max(0, pdfFiles.count - 1))
+        for (bookmark, filename) in bookmarkedFilenames {
+            if let index = filenames.firstIndex(of: filename) {
+                bookmark.chapterIndex = index
+            } else {
+                modelContext.delete(bookmark)
+            }
         }
 
         if book.thumbnailPath == nil, let firstPDF = pdfFiles.first {
@@ -606,7 +613,38 @@ final class ImportService {
         let pdfCount = (try? fm.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension.lowercased() == "pdf" }
             .count ?? 0
-        return "\(Int(mtime.timeIntervalSince1970))_\(pdfCount)"
+        let englishURL = folderURL.appendingPathComponent("EN", isDirectory: true)
+        let englishMtime = (try? fm.attributesOfItem(atPath: englishURL.path))?[.modificationDate] as? Date
+        let englishCount = (try? Self.chapterFiles(in: folderURL).count) ?? 0
+        return "v2_\(mtime.timeIntervalSince1970)_\(pdfCount)_\(englishMtime?.timeIntervalSince1970 ?? -1)_\(englishCount)"
+    }
+
+    static func hasEnglishFolder(in folderURL: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(
+            atPath: folderURL.appendingPathComponent("EN").path, isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+    }
+
+    /// VN PDFs stay in the series root; EN PDFs use relative paths to keep identities distinct.
+    static func chapterFiles(in folderURL: URL) throws -> [URL] {
+        func pdfs(in directory: URL) throws -> [URL] {
+            try FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
+            )
+            .filter { $0.pathExtension.lowercased() == "pdf"
+                && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        }
+        let vietnamese = try pdfs(in: folderURL)
+        let english = try hasEnglishFolder(in: folderURL)
+            ? pdfs(in: folderURL.appendingPathComponent("EN", isDirectory: true)) : []
+        return vietnamese + english
+    }
+
+    private static func chapterFilename(_ url: URL, in folderURL: URL) -> String {
+        url.deletingLastPathComponent().standardizedFileURL == folderURL.standardizedFileURL
+            ? url.lastPathComponent : "EN/" + url.lastPathComponent
     }
 
     /// Filename used inside `Application Support/Thumbnails/` for a book's cached cover.

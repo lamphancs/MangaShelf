@@ -137,6 +137,52 @@ struct AddSeriesSmokeApp: App {
                   && returned.sortedBookmarks.first?.colorName == "blue", "Bookmarks restored")
         try check(returned.hasManualCover && returned.thumbnailPath != nil, "Cover restored")
         try check(try Data(contentsOf: returnedFolder.appendingPathComponent("Art/art.jpg")) == cover, "Art preserved")
-        return "PASS: creation, optional URL, validation, duplicates, empty-series rebuild, folder rename and move round-trip with metadata, reading state, bookmarks, cover and art"
+        try check(!ImportService.hasEnglishFolder(in: returnedFolder), "Missing EN folder disables language switch")
+        let englishFolder = returnedFolder.appendingPathComponent("EN")
+        try Data().write(to: englishFolder)
+        try check(!ImportService.hasEnglishFolder(in: returnedFolder), "EN file is not a directory")
+        try FileManager.default.removeItem(at: englishFolder)
+        try FileManager.default.createDirectory(at: englishFolder, withIntermediateDirectories: false)
+        try check(ImportService.hasEnglishFolder(in: returnedFolder), "Empty EN folder enables switch")
+        for name in ["Chapter 10.pdf", "Chapter 2.pdf"] {
+            try pdf.write(to: englishFolder.appendingPathComponent(name))
+        }
+        _ = try await service.scanSecretFolder(modelContext: context)
+        try check(returned.sortedChapters.map(\.filename) == [
+            "Chapter 1.pdf", "Chapter 2.pdf", "EN/Chapter 2.pdf", "EN/Chapter 10.pdf"
+        ], "Both languages scan in natural order without filename collisions")
+        let english = returned.sortedChapters[2]
+        try check(english.displayName == "Chapter 2" && english.isEnglish, "EN display name")
+        returned.currentChapterIndex = 2
+        let reader = ReaderViewModel(book: returned)
+        try check(reader.sortedChapters.count == 2 && reader.sortedChapters.allSatisfy(\.isEnglish)
+                  && reader.currentChapterIndex == 0, "Reader navigation stays in EN")
+        reader.saveBookmark(note: "English bookmark", color: .red, modelContext: context)
+        try check(returned.bookmarks?.contains { $0.chapterIndex == 2 && $0.note == "English bookmark" } == true,
+                  "Reader maps EN bookmarks to stored chapter identity")
+        reader.currentPage = 1
+        reader.saveProgress(modelContext: context)
+        try check(returned.currentChapterIndex == 2 && english.lastReadPage == 1
+                  && returned.sortedChapters[1].lastReadPage == 2, "Language progress stays separate")
+        try pdf.write(to: returnedFolder.appendingPathComponent("Chapter 0.pdf"))
+        _ = try await service.scanSecretFolder(modelContext: context, force: true)
+        try check(returned.sortedChapters[returned.currentChapterIndex].filename == "EN/Chapter 2.pdf",
+                  "Rescan preserves current EN chapter when VN indices shift")
+        try check(returned.bookmarks?.contains {
+            $0.note == "English bookmark" && returned.sortedChapters[$0.chapterIndex].filename == "EN/Chapter 2.pdf"
+        } == true, "Rescan preserves EN bookmark identity")
+        try pdf.write(to: englishFolder.appendingPathComponent("Chapter 3.pdf"))
+        _ = try await service.scanSecretFolder(modelContext: context)
+        try check(returned.sortedChapters.contains { $0.filename == "EN/Chapter 3.pdf" },
+                  "EN folder changes invalidate scan signature")
+        await BookDataService.shared.save(book: returned, seriesFolderURL: returnedFolder)
+        let bilingualData = await BookDataService.shared.load(seriesFolderURL: returnedFolder)
+        try check(bilingualData?.chapterProgress["EN/Chapter 2.pdf"] == 1
+                  && bilingualData?.chapterProgress["Chapter 2.pdf"] == 2, "Portable progress uses distinct language paths")
+        try FileManager.default.removeItem(at: englishFolder)
+        _ = try await service.scanSecretFolder(modelContext: context, force: true)
+        try check(!ImportService.hasEnglishFolder(in: returnedFolder)
+                  && returned.sortedChapters.allSatisfy { !$0.isEnglish }, "Removing EN folder removes EN chapters")
+        return "PASS: series creation, metadata round-trip, VN/EN discovery, natural sort, reader language isolation, separate progress/bookmarks, rescan identity and EN removal"
     }
 }
