@@ -29,8 +29,6 @@ struct ChapterListView: View {
     @State private var editingLink: BookLinkKind?
     @State private var showEditSeriesNote = false
     @State private var showInfoBox = false
-    @State private var actionLinkKind: BookLinkKind?
-    @State private var pendingCapture: CaptureLink?
     @State private var captureURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -99,14 +97,6 @@ struct ChapterListView: View {
         }
         .sheet(isPresented: $showEditSeriesNote) {
             SeriesNoteEditorSheet(book: book)
-        }
-        .sheet(item: $actionLinkKind, onDismiss: {
-            if let link = pendingCapture {
-                pendingCapture = nil
-                captureURL = link
-            }
-        }) { kind in
-            linkActionsSheet(kind)
         }
         .fullScreenCover(item: $captureURL, onDismiss: {
             Task {
@@ -448,17 +438,23 @@ struct ChapterListView: View {
                 .frame(width: 28)
             Button {
                 guard let url else { editingLink = kind; return }
-                if kind != .latestChapter {
-                    actionLinkKind = kind
-                } else {
-                    captureURL = CaptureLink(url: url)
-                }
+                captureURL = CaptureLink(url: url, isEnglish: kind == .englishSeries)
             } label: {
-                Text(url == nil ? kind.addLabel : (kind == .englishSeries ? "Eng Version" : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")")))
+                Text(url == nil ? kind.addLabel : (kind == .englishSeries ? "\(englishChapterLabel(url)) - EN" : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")")))
                     .font(.subheadline)
                     .foregroundColor(url == nil ? .tertiaryText : theme.accent)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+            }
+            .contextMenu {
+                if let url {
+                    Button {
+                        UIPasteboard.general.string = url.absoluteString
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } label: {
+                        Label("Copy Link", systemImage: "doc.on.doc")
+                    }
+                }
             }
             Spacer(minLength: 8)
             Button { editingLink = kind } label: {
@@ -470,79 +466,10 @@ struct ChapterListView: View {
         }
     }
 
-    // MARK: - Link Actions
-
-    private func linkActionsSheet(_ kind: BookLinkKind) -> some View {
-        VStack(spacing: 0) {
-            if let urlString = book[keyPath: kind.urlKeyPath], !urlString.isEmpty,
-               let url = URL(string: urlString) {
-
-                Text(url.host ?? urlString)
-                    .font(.caption)
-                    .foregroundColor(.secondaryText)
-                    .padding(.top, 16)
-                    .padding(.bottom, 12)
-
-                linkActionRow(icon: "safari", title: "Open in Safari") {
-                    actionLinkKind = nil
-                    UIApplication.shared.open(url)
-                }
-
-                if let chromeURL = chromeURL(from: url) {
-                    linkActionRow(icon: "globe", title: "Open in Chrome") {
-                        actionLinkKind = nil
-                        UIApplication.shared.open(chromeURL)
-                    }
-                }
-
-                Divider()
-                    .padding(.horizontal, 20)
-
-                if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                    linkActionRow(icon: "camera.viewfinder", title: "Browse & Capture") {
-                        pendingCapture = CaptureLink(url: url, isEnglish: kind == .englishSeries)
-                        actionLinkKind = nil
-                    }
-                }
-
-                linkActionRow(icon: "doc.on.doc", title: "Copy Link") {
-                    UIPasteboard.general.string = urlString
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    actionLinkKind = nil
-                }
-            }
-        }
-        .padding(.bottom, 8)
-        .presentationDetents([.height(280)])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(theme.cardBackground)
-        .preferredColorScheme(.dark)
-    }
-
-    private func linkActionRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 16))
-                    .foregroundColor(theme.accent)
-                    .frame(width: 24)
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                Spacer()
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-    }
-
-    private func chromeURL(from url: URL) -> URL? {
-        guard let scheme = url.scheme?.lowercased() else { return nil }
-        let chromeScheme = scheme == "https" ? "googlechromes" : "googlechrome"
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.scheme = chromeScheme
-        return components?.url
+    /// The EN link has no stored chapter number, so infer it from the URL ("Chapter #" when it can't be read).
+    private func englishChapterLabel(_ url: URL?) -> String {
+        let suggestion = CaptureFileName.chapterSuggestion(url: url, title: nil)
+        return suggestion == "Chapter" ? "Chapter #" : suggestion
     }
 
     // MARK: - Chapters Header
