@@ -8,3 +8,8 @@ and empty-series survival/reconstruction through the production scanner.
 Also checks URL-free creation, display-title preservation across folder renames, and a
 move-out/move-back cycle restoring links, notes, dates, chapter progress/scroll offsets,
 bookmarks, cover, and artwork.
+
+Checks VN/EN discovery, reader language isolation, progress/bookmark identity after
+rescans, EN folder removal, and capture routing. EN captures create/reuse EN/,
+preserve duplicate files, update the portable EN link, and leave Latest chapter
+unchanged. Default VN captures retain their original destination and link behavior.

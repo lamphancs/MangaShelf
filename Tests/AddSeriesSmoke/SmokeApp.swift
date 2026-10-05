@@ -183,6 +183,50 @@ struct AddSeriesSmokeApp: App {
         _ = try await service.scanSecretFolder(modelContext: context, force: true)
         try check(!ImportService.hasEnglishFolder(in: returnedFolder)
                   && returned.sortedChapters.allSatisfy { !$0.isEnglish }, "Removing EN folder removes EN chapters")
-        return "PASS: series creation, metadata round-trip, VN/EN discovery, natural sort, reader language isolation, separate progress/bookmarks, rescan identity and EN removal"
+        // Captures inherit the language of the link used to open the browser.
+        let vnURL = returned.latestChapterURL
+        let vnNumber = returned.latestChapterNumber
+        let enChapterURL = URL(string: "https://example.com/en/chapter-5")!
+        let capturedEnglish = try await service.saveCapturedChapter(
+            pdf, for: returned, filename: "Chapter 2.pdf", sourceURL: enChapterURL,
+            chapterTitle: "Chapter 5", isEnglish: true, modelContext: context
+        )
+        try check(capturedEnglish.lastPathComponent == "Chapter 2.pdf"
+                  && capturedEnglish.deletingLastPathComponent().standardizedFileURL == englishFolder.standardizedFileURL,
+                  "EN capture creates EN directory and ignores VN filename collisions")
+        try check(returned.sortedChapters.contains { $0.filename == "EN/Chapter 2.pdf" },
+                  "EN capture appears in English chapters")
+        try check(returned.englishSeriesURL == enChapterURL.absoluteString
+                  && returned.latestChapterURL == vnURL && returned.latestChapterNumber == vnNumber,
+                  "EN capture updates EN link and preserves latest VN chapter")
+        let englishMetadata = await BookDataService.shared.load(seriesFolderURL: returnedFolder)
+        try check(englishMetadata?.englishSeriesURL == enChapterURL.absoluteString
+                  && englishMetadata?.latestChapterURL == vnURL && englishMetadata?.latestChapterNumber == vnNumber,
+                  "EN capture link is portable")
+        let duplicateEnglish = try await service.saveCapturedChapter(
+            pdf, for: returned, filename: "Chapter 2.pdf", seriesFolderURL: returnedFolder,
+            sourceURL: URL(string: "https://example.com/en/chapter-6"), isEnglish: true, modelContext: context
+        )
+        try check(duplicateEnglish.lastPathComponent == "Chapter 2 (2).pdf"
+                  && returned.englishSeriesURL == "https://example.com/en/chapter-6",
+                  "Subsequent EN captures keep the destination and update EN link")
+        do {
+            _ = try await service.saveCapturedChapter(
+                Data(), for: returned, seriesFolderURL: returnedFolder,
+                sourceURL: URL(string: "https://example.com/en/chapter-7"), isEnglish: true, modelContext: context
+            )
+            throw NSError(domain: "Invalid capture accepted", code: 1)
+        } catch is WebCaptureError { }
+        try check(returned.englishSeriesURL == "https://example.com/en/chapter-6"
+                  && returned.latestChapterURL == vnURL, "Failed capture preserves links")
+        let capturedVietnamese = try await service.saveCapturedChapter(
+            pdf, for: returned, filename: "Chapter 8.pdf", seriesFolderURL: returnedFolder,
+            sourceURL: URL(string: "https://example.com/vn/chapter-8"), modelContext: context
+        )
+        try check(capturedVietnamese.deletingLastPathComponent().standardizedFileURL == returnedFolder.standardizedFileURL
+                  && returned.latestChapterURL == "https://example.com/vn/chapter-8" && returned.latestChapterNumber == "8"
+                  && returned.englishSeriesURL == "https://example.com/en/chapter-6",
+                  "Default VN capture keeps existing destination and latest chapter behavior")
+        return "PASS: series creation, metadata round-trip, VN/EN discovery, natural sort, reader language isolation, separate progress/bookmarks, rescan identity, EN removal and language-aware capture destinations/links"
     }
 }

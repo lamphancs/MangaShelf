@@ -31,7 +31,7 @@ struct ChapterListView: View {
     @State private var showInfoBox = false
     @State private var showLinkActions = false
     @State private var actionLinkKind: BookLinkKind = .series
-    @State private var pendingCaptureURL: URL?
+    @State private var pendingCapture: CaptureLink?
     @State private var captureURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -46,6 +46,7 @@ struct ChapterListView: View {
     private struct CaptureLink: Identifiable {
         let id = UUID()
         let url: URL
+        var isEnglish = false
     }
 
     var body: some View {
@@ -101,17 +102,20 @@ struct ChapterListView: View {
             SeriesNoteEditorSheet(book: book)
         }
         .sheet(isPresented: $showLinkActions, onDismiss: {
-            if let url = pendingCaptureURL {
-                pendingCaptureURL = nil
-                captureURL = CaptureLink(url: url)
+            if let link = pendingCapture {
+                pendingCapture = nil
+                captureURL = link
             }
         }) {
             linkActionsSheet
         }
         .fullScreenCover(item: $captureURL, onDismiss: {
-            Task { await loadArtImages() }
+            Task {
+                await syncChapters()
+                await loadArtImages()
+            }
         }) { link in
-            WebPageCaptureView(url: link.url, book: book)
+            WebPageCaptureView(url: link.url, book: book, isEnglish: link.isEnglish)
         }
         .fullScreenCover(item: $artViewerItem, onDismiss: {
             Task { await loadArtImages() }
@@ -498,7 +502,7 @@ struct ChapterListView: View {
 
                 if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     linkActionRow(icon: "camera.viewfinder", title: "Browse & Capture") {
-                        pendingCaptureURL = url
+                        pendingCapture = CaptureLink(url: url, isEnglish: actionLinkKind == .englishSeries)
                         showLinkActions = false
                     }
                 }

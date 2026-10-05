@@ -5,6 +5,7 @@ import WebKit
 struct WebPageCaptureView: View {
     let url: URL
     let book: Book
+    let isEnglish: Bool
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -36,9 +37,10 @@ struct WebPageCaptureView: View {
         let title: String?
     }
 
-    init(url: URL, book: Book) {
+    init(url: URL, book: Book, isEnglish: Bool = false) {
         self.url = url
         self.book = book
+        self.isEnglish = isEnglish
         _addressInput = State(initialValue: url.absoluteString)
         _model = State(initialValue: WebPageCaptureModel(isPrivate: book.isSecret))
     }
@@ -359,7 +361,7 @@ struct WebPageCaptureView: View {
                     .foregroundStyle(theme.accent)
                     if book.isSeries {
                         Button { requestExport(saveToSeries: true) } label: {
-                            Label(saved ? "Saved" : "Save PDF", systemImage: saved ? "checkmark" : "arrow.down.to.line")
+                            Label(saved ? "Saved" : (isEnglish ? "Save PDF to EN" : "Save PDF"), systemImage: saved ? "checkmark" : "arrow.down.to.line")
                                 .font(.body.weight(.semibold))
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
@@ -368,7 +370,7 @@ struct WebPageCaptureView: View {
                                 .background(theme.accent, in: RoundedRectangle(cornerRadius: 14))
                                 .contentShape(RoundedRectangle(cornerRadius: 14))
                         }
-                        .accessibilityLabel(saved ? "Saved to Chapters" : "Save PDF")
+                        .accessibilityLabel(saved ? (isEnglish ? "Saved to EN Chapters" : "Saved to Chapters") : (isEnglish ? "Save PDF to EN" : "Save PDF"))
                         .disabled(saved)
                         .opacity(saved ? 0.55 : 1)
                     }
@@ -473,8 +475,8 @@ struct WebPageCaptureView: View {
                 }.value
                 try Task.checkCancellation()
                 if saveToSeries {
-                    let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: sourceURL, chapterTitle: chapterTitle, modelContext: modelContext)
-                    savedDescription = "\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
+                    let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: sourceURL, chapterTitle: chapterTitle, isEnglish: isEnglish, modelContext: modelContext)
+                    savedDescription = "\(isEnglish ? "EN/" : "")\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
                     saved = true
                     showSaveSuccess = true
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
