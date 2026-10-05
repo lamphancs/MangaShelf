@@ -23,7 +23,7 @@ struct AddSeriesView: View {
             Form {
                 if linkStep {
                     Section {
-                        TextField("https://... (optional)", text: $draft.url)
+                        TextField("example.com/series (optional)", text: $draft.url)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -43,7 +43,7 @@ struct AddSeriesView: View {
                     }
                     .disabled(!draft.linkIsValid)
                     if !draft.linkIsValid {
-                        Text("Enter a valid http or https link, or leave it empty.")
+                        Text("Enter a valid website address, or leave it empty.")
                             .font(.caption)
                             .foregroundStyle(.red)
                     }

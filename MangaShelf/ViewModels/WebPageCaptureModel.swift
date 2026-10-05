@@ -166,6 +166,12 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                 (() => {
                     const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
                         .toLowerCase().replace(/\s+/g, ' ').trim();
+                    // Only consider chapter URLs that actually exist in the page.
+                    const chapter = url => {
+                        const match = url.pathname.match(/^(.*\/(?:chapter|chap|chuong)[-_]?)(\d+(?:[.,]\d+)?)(\/?(?:\.html?)?)$/i);
+                        return match ? {series: match[1], number: Number(match[2].replace(',', '.')), suffix: match[3]} : null;
+                    };
+                    const currentChapter = chapter(new URL(location.href));
                     const candidates = Array.from(document.querySelectorAll('a[href], link[rel~="next"][href]'))
                         .filter(a => !a.matches('[aria-disabled="true"], [disabled], .disabled'))
                         .map(a => {
@@ -177,11 +183,20 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                             const chapterLabel = labels.some(t => /^(next\s+(chapter|chap)|chuong\s+(tiep|sau)|chap\s+(tiep|sau))\b/.test(t));
                             const relNext = a.rel.split(/\s+/).includes('next');
                             const identifier = /(^|[\s_-])(next[-_]?(chapter|chap)|(chapter|chap)[-_]?next)([\s_-]|$)/i.test(a.id + ' ' + a.className);
-                            const score = chapterLabel ? 3 : relNext ? 2 : identifier ? 1 : 0;
-                            return score ? {url: url.href, score} : null;
+                            const targetChapter = chapter(url);
+                            const followingChapter = currentChapter && targetChapter &&
+                                currentChapter.series === targetChapter.series &&
+                                currentChapter.suffix === targetChapter.suffix &&
+                                targetChapter.number > currentChapter.number;
+                            const score = chapterLabel ? 4 : relNext ? 3 : identifier ? 2 : followingChapter ? 1 : 0;
+                            return score ? {url: url.href, score, number: targetChapter?.number} : null;
                         }).filter(Boolean).sort((a, b) => b.score - a.score);
                     if (!candidates.length) return null;
-                    const best = candidates.filter(a => a.score === candidates[0].score);
+                    let best = candidates.filter(a => a.score === candidates[0].score);
+                    if (candidates[0].score === 1) {
+                        const nearest = Math.min(...best.map(a => a.number));
+                        best = best.filter(a => a.number === nearest);
+                    }
                     return new Set(best.map(a => a.url)).size === 1 ? best[0].url : null;
                 })()
                 """#) { result, error in

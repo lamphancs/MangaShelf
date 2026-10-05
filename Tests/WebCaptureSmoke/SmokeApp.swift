@@ -106,6 +106,20 @@ struct CaptureSmokeView: View {
             let iconNext = try await model.findNextChapterURL()
             browsingChecks.append("\(iconNext == nextChapter ? "PASS" : "FAIL"): Icon-only chapter link recognized by class")
             _ = try await model.webView.evaluateJavaScript("document.querySelector('#next').textContent = 'Next chapter'; document.querySelector('#next').className = ''")
+            for prefix in ["truyen", "series"] {
+                _ = try await model.webView.evaluateJavaScript("""
+                    window.originalChapterURL = location.href;
+                    history.replaceState(null, '', '/\(prefix)/fixture/chapter-42');
+                    document.querySelector('#next').removeAttribute('id');
+                    document.querySelector('a').textContent = 'Contents';
+                    window.chapterFixture = document.createElement('div');
+                    chapterFixture.innerHTML = '<a href="/\(prefix)/fixture/chapter-41">Previous</a><a href="/\(prefix)/fixture/chapter-42.5">›</a><a href="/\(prefix)/fixture/chapter-43">43</a><a href="/\(prefix)/other/chapter-43">Other series</a>';
+                    document.body.append(chapterFixture);
+                    """)
+                let detected = try await model.findNextChapterURL()
+                browsingChecks.append("\(detected?.path == "/\(prefix)/fixture/chapter-42.5" ? "PASS" : "FAIL"): Detect nearest linked chapter under /\(prefix)/")
+                _ = try await model.webView.evaluateJavaScript("chapterFixture.remove(); history.replaceState(null, '', originalChapterURL); document.querySelector('a').id = 'next'; document.querySelector('#next').textContent = 'Next chapter'")
+            }
             model.nextChapterURL = nextChapter
             let advanced = model.goToNextChapter()
             try await waitForPage(query: "chapter=2")
@@ -279,6 +293,11 @@ struct CaptureSmokeView: View {
             book.latestChapterNumber = "42.5"
             check(BookLinkKind.webURL(book.latestChapterURL!) != nil && BookLinkKind.webURL("javascript:alert(1)") == nil && BookLinkKind.webURL("https://") == nil,
                   "Link editor accepts web links and rejects invalid/non-web URLs")
+            check(BookLinkKind.webURL(" example.com/series/title ")?.absoluteString == "https://example.com/series/title"
+                  && BookLinkKind.webURL("http://example.com/chapter-1")?.scheme == "http"
+                  && BookLinkKind.webURL("//example.com/en")?.absoluteString == "https://example.com/en"
+                  && BookLinkKind.webURL("bad address") == nil,
+                  "Scheme-free links default to HTTPS and explicit HTTP is preserved")
             let original = Chapter(filename: "Z Existing.pdf", sortOrder: 0, totalPages: 1, lastReadPage: 0)
             original.lastReadOffset = 123
             original.book = book

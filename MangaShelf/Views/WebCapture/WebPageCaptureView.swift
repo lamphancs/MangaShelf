@@ -192,6 +192,7 @@ struct WebPageCaptureView: View {
         Menu {
             Button("Save as Series Link") { shareCurrentLink(as: .series) }
             Button("Save as Latest Chapter Link") { shareCurrentLink(as: .latestChapter) }
+            Button("Save as Eng Version Link") { shareCurrentLink(as: .englishSeries) }
         } label: {
             Image(systemName: "square.and.arrow.up")
                 .frame(width: browserSideWidth, height: browserToolbarHeight)
@@ -238,8 +239,7 @@ struct WebPageCaptureView: View {
     private func navigateToAddress() {
         guard !model.isCapturing else { return }
         let input = addressInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let candidate = URL(string: input)?.scheme == nil ? "https://" + input : input
-        guard let destination = BookLinkKind.webURL(candidate) else {
+        guard let destination = BookLinkKind.webURL(input) else {
             model.errorMessage = "Enter a valid website address, such as https://example.com."
             return
         }

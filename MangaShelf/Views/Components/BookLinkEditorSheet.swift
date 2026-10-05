@@ -43,7 +43,16 @@ enum BookLinkKind: String, Identifiable {
     nonisolated static func webURL(_ input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }),
-              let url = URL(string: trimmed),
+              !trimmed.contains("\\") else { return nil }
+        let candidate: String
+        if trimmed.hasPrefix("//") {
+            candidate = "https:" + trimmed
+        } else if trimmed.range(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*:"#, options: .regularExpression) != nil {
+            candidate = trimmed
+        } else {
+            candidate = "https://" + trimmed
+        }
+        guard let url = URL(string: candidate),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host, !host.isEmpty else { return nil }
         return url
@@ -82,7 +91,7 @@ struct BookLinkEditorSheet: View {
         NavigationStack {
             Form {
                 Section(kind.sectionTitle) {
-                    TextField("https://...", text: $urlInput)
+                    TextField("example.com/series/...", text: $urlInput)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -92,7 +101,7 @@ struct BookLinkEditorSheet: View {
                     }
                 }
                 if !trimmedURL.isEmpty && BookLinkKind.webURL(trimmedURL) == nil {
-                    Text("Enter a valid http or https link.")
+                    Text("Enter a valid website address, such as example.com/series.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
@@ -136,7 +145,7 @@ struct BookLinkEditorSheet: View {
     private func save(remove: Bool) {
         let oldURL = book[keyPath: kind.urlKeyPath]
         let oldNumber = book.latestChapterNumber
-        let value = remove || trimmedURL.isEmpty ? nil : trimmedURL
+        let value = remove || trimmedURL.isEmpty ? nil : BookLinkKind.webURL(trimmedURL)?.absoluteString
         book[keyPath: kind.urlKeyPath] = value
         if kind == .latestChapter {
             book.latestChapterNumber = value == nil ? nil : trimmedNumber
