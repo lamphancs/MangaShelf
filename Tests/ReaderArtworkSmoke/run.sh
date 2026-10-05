@@ -21,8 +21,12 @@ xcrun simctl install "$simulator_id" "$work_dir/build/Build/Products/Debug-iphon
 container_path="$(xcrun simctl get_app_container "$simulator_id" "$bundle_id" data)"
 # Remove only this test's previous result to prevent false positives on repeat runs.
 rm -f "$container_path/Documents/result.txt"
-xcrun simctl launch "$simulator_id" "$bundle_id"
-for _ in $(seq 1 30); do
+if [[ -n "${READER_SEAM_PDF:-}" ]]; then
+    : "${READER_SEAM_Y:?Set the PDF y-coordinate of a seam in a white gutter}"
+    cp "$READER_SEAM_PDF" "$container_path/Documents/seam-regression.pdf"
+fi
+SIMCTL_CHILD_READER_SEAM_Y="${READER_SEAM_Y:-}" xcrun simctl launch "$simulator_id" "$bundle_id"
+for _ in $(seq 1 60); do
     if [[ -f "$container_path/Documents/result.txt" ]]; then
         cp "$container_path/Documents/result.txt" "$work_dir/result.txt"
         cat "$work_dir/result.txt"

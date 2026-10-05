@@ -122,6 +122,9 @@ nonisolated struct WebCaptureDocument: Sendable {
                 context.scaleBy(x: 1, y: -1)
                 context.concatenate(page.getDrawingTransform(.mediaBox,
                     rect: CGRect(origin: .zero, size: pageRect.size), rotate: 0, preserveAspectRatio: true))
+                // Avoid dark hairlines where WebKit clips touching chapter images.
+                // This is a raster-preview setting; it does not rewrite the PDF.
+                context.setShouldAntialias(false)
                 context.drawPDFPage(page)
                 context.restoreGState()
             }

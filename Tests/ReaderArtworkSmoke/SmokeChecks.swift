@@ -304,6 +304,79 @@ func runReaderArtworkChecks() async throws -> String {
         }
         return bytes
     }
+    // A PDF need not paint its paper. Model adjacent web images with an
+    // unpainted one-point gap, plus a genuine black rule that must stay black.
+    let paperData = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 1200)).pdfData { context in
+        context.beginPage()
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 300, height: 200))
+        context.fill(CGRect(x: 0, y: 201, width: 300, height: 999))
+        UIColor.black.setFill()
+        context.fill(CGRect(x: 0, y: 210, width: 300, height: 2))
+    }
+    let paperContent = PDFContentView()
+    paperContent.configure(document: PDFDocument(data: paperData)!, width: 300,
+                           viewportHeight: 400, artwork: [])
+    let paperY = paperContent.pageRects[0].offset
+    let paperViewport = CGRect(x: 0, y: paperY, width: 300, height: 400)
+    paperContent.updateViewport(paperViewport)
+    await withCheckedContinuation { continuation in
+        paperContent.awaitViewportRendered(paperViewport) { continuation.resume() }
+    }
+    let paperLayer = paperContent.layer.sublayers!.first { $0.zPosition == 2 }!
+    let paperTile = UIImage(cgImage: paperLayer.sublayers!.first!.contents as! CGImage,
+                            scale: paperContent.traitCollection.displayScale, orientation: .up)
+    let paperCapture = paperContent.captureViewport(paperViewport)!
+    for image in [paperTile, paperCapture] {
+        try check(rgb(image, x: 150, y: 200.5).prefix(3).allSatisfy { $0 > 245 },
+                  "Unpainted PDF image seam uses white paper in tiles and gallery captures")
+        try check(rgb(image, x: 150, y: 211).prefix(3).allSatisfy { $0 < 10 },
+                  "Real black comic lines remain intact")
+    }
+    paperContent.clearContent()
+    // Reproduce WebKit's fractional image clip over a dark background embedded
+    // in the PDF (white reader paper alone cannot fix this seam).
+    let seamData = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 1200)).pdfData { context in
+        context.beginPage()
+        UIColor(white: 0.035, alpha: 1).setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 300, height: 1200))
+        let white = image(.white, size: CGSize(width: 300, height: 600))
+        let cg = context.cgContext
+        cg.saveGState()
+        cg.clip(to: CGRect(x: 0, y: 0, width: 300, height: 599.567))
+        white.draw(in: CGRect(x: 0, y: 0, width: 300, height: 599.9))
+        cg.restoreGState()
+        white.draw(in: CGRect(x: 0, y: 599.9, width: 300, height: 600.1))
+        UIColor.black.setFill()
+        context.fill(CGRect(x: 0, y: 610, width: 300, height: 2))
+    }
+    let clippedContent = PDFContentView()
+    clippedContent.configure(document: PDFDocument(data: seamData)!, width: 300,
+                             viewportHeight: 400, artwork: [])
+    let clippedY = clippedContent.pageRects[0].offset
+    let clippedViewport = CGRect(x: 0, y: clippedY + 500, width: 300, height: 400)
+    clippedContent.updateViewport(clippedViewport)
+    await withCheckedContinuation { continuation in
+        clippedContent.awaitViewportRendered(clippedViewport) { continuation.resume() }
+    }
+    let clippedLayer = clippedContent.layer.sublayers!.first { $0.zPosition == 2 }!
+    let seamTile = clippedLayer.sublayers!.first { $0.frame.minY <= clippedY + 600 && $0.frame.maxY > clippedY + 600 }!
+    let tileImage = UIImage(cgImage: seamTile.contents as! CGImage,
+                            scale: clippedContent.traitCollection.displayScale, orientation: .up)
+    let seamCapture = clippedContent.captureViewport(clippedViewport)!
+    for (image, seamY) in [(tileImage, clippedY + 599.9 - seamTile.frame.minY), (seamCapture, CGFloat(99.9))] {
+        for delta in [-0.5, 0.0, 0.5] {
+            try check(rgb(image, x: 150, y: seamY + delta).prefix(3).allSatisfy { $0 > 245 },
+                      "Fractional image clips do not reveal the PDF's embedded dark background")
+        }
+        try check(rgb(image, x: 150, y: seamY + 11.1).prefix(3).allSatisfy { $0 < 10 },
+                  "Seam handling preserves an actual black line beside the join")
+    }
+    let preview = try WebCaptureDocument(data: seamData).render(
+        crop: CGRect(x: 0, y: 500.0 / 1200, width: 1, height: 400.0 / 1200), pixelWidth: 900)
+    try check(rgb(preview, x: 450, y: 299).prefix(3).allSatisfy { $0 > 245 },
+              "Capture preview uses the same seam-free rasterization as the reader")
+    clippedContent.clearContent()
     let top = rgb(captured, x: 150, y: 10)
     let lower = rgb(captured, x: 150, y: 100)
     try check(top[1] > 240 && top[0] < 15 && lower[0] > 240 && lower[1] < 15,
@@ -357,5 +430,54 @@ func runReaderArtworkChecks() async throws -> String {
     try check(flingLayer.sublayers!.filter { $0.contents != nil }.count <= 6,
               "Tall chapters retain only the bounded viewport window after a fling")
     flingContent.clearContent()
+    // Optional private chapter repro; the supplied PDF is never committed to the repo.
+    // READER_SEAM_Y identifies a known white gutter, measured from the PDF's top.
+    if let coordinate = ProcessInfo.processInfo.environment["READER_SEAM_Y"],
+       let seamY = Double(coordinate) {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let data = try Data(contentsOf: documents.appendingPathComponent("seam-regression.pdf"))
+        let document = PDFDocument(data: data)!
+        let sourceSize = document.page(at: 0)!.bounds(for: .mediaBox).size
+        for width: CGFloat in [300, 390, 430] {
+            let reader = PDFContentView()
+            reader.configure(document: document, width: width, viewportHeight: 400, artwork: [])
+            let ratio = width / sourceSize.width
+            let join = reader.pageRects[0].offset + seamY * ratio
+            let target = CGRect(x: 0, y: join - 120, width: width, height: 400)
+            reader.updateViewport(target)
+            await withCheckedContinuation { continuation in
+                reader.awaitViewportRendered(target) { continuation.resume() }
+            }
+            let layer = reader.layer.sublayers!.first { $0.zPosition == 2 }!
+            let tile = layer.sublayers!.first { $0.frame.minY <= join && $0.frame.maxY > join }!
+            let scale = reader.traitCollection.displayScale
+            let rendered = UIImage(cgImage: tile.contents as! CGImage, scale: scale, orientation: .up)
+            for delta: CGFloat in [-1, -0.5, 0, 0.5, 1] {
+                try check(rgb(rendered, x: width * 0.05, y: join - tile.frame.minY + delta).prefix(3).allSatisfy { $0 > 245 },
+                          "Private chapter's displayed seam is white at width \(width), delta \(delta)")
+            }
+            for offset: CGFloat in [0, 0.25, 0.5, 0.75] {
+                let shot = reader.captureViewport(target.offsetBy(dx: 0, dy: offset))!
+                for delta: CGFloat in [-1, -0.5, 0, 0.5, 1] {
+                    try check(rgb(shot, x: width * 0.05, y: 120 - offset + delta).prefix(3).allSatisfy { $0 > 245 },
+                              "Private chapter's captured seam stays white at fractional scroll offsets")
+                }
+                if width == 430 && offset == 0 {
+                    try shot.pngData()!.write(to: documents.appendingPathComponent("seam-fixed.png"))
+                }
+            }
+            reader.clearContent()
+        }
+        let captureDocument = try WebCaptureDocument(data: data)
+        for pixelWidth: CGFloat in [430, 860, 1290] {
+            let shot = try captureDocument.render(crop: CGRect(x: 0, y: (seamY - 120) / sourceSize.height,
+                width: 1, height: 240 / sourceSize.height), pixelWidth: pixelWidth)
+            let ratio = pixelWidth / sourceSize.width
+            for delta: CGFloat in [-1, -0.5, 0, 0.5, 1] {
+                try check(rgb(shot, x: pixelWidth * 0.05, y: (120 + delta) * ratio).prefix(3).allSatisfy { $0 > 245 },
+                          "Private chapter's capture preview stays white at \(pixelWidth) pixels")
+            }
+        }
+    }
     return "PASS: \(passed) reader artwork checks"
 }

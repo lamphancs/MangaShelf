@@ -416,7 +416,10 @@ fileprivate class PDFContentView: UIView {
     private var generation: Int = 0
     private var scheduledGeneration = 0
     private var pendingSchedule: DispatchWorkItem?
-    private static let bgColor: CGColor = UIColor.black.cgColor
+    // PDF paper is white: unpainted areas and antialiased image edges must not
+    // reveal the reader's black surround as horizontal seams between images.
+    // Shared by display tiles and viewport captures used for gallery artwork.
+    private static let bgColor: CGColor = UIColor.white.cgColor
     /// Placeholder shown for a tile that hasn't finished rendering yet. A neutral
     /// gray instead of black so scrolling into not-yet-rendered pages reads as
     /// "loading" rather than a jarring black gap against light manga pages.
@@ -771,7 +774,8 @@ fileprivate class PDFContentView: UIView {
 
             for (index, layout) in pageRects.enumerated() {
                 let rect = CGRect(x: 0, y: layout.offset, width: contentWidth, height: layout.height)
-                guard rect.intersects(viewport), let page = document.page(at: index) else { continue }
+                guard rect.intersects(viewport), let page = document.page(at: index),
+                      let pageRef = page.pageRef else { continue }
                 let bounds = page.bounds(for: .mediaBox)
                 guard bounds.width > 0 else { continue }
                 let scale = contentWidth / bounds.width
@@ -781,7 +785,14 @@ fileprivate class PDFContentView: UIView {
                 cg.fill(rect)
                 cg.translateBy(x: 0, y: rect.maxY)
                 cg.scaleBy(x: scale, y: -scale)
-                page.draw(with: .mediaBox, to: cg)
+                // WebKit PDFs clip adjacent images at fractional coordinates. Edge
+                // antialiasing blends those cuts with the PDF's own dark background,
+                // even when our paper is white. Keep image interpolation enabled.
+                cg.setShouldAntialias(false)
+                cg.concatenate(pageRef.getDrawingTransform(.mediaBox,
+                    rect: CGRect(origin: .zero, size: bounds.size), rotate: 0, preserveAspectRatio: true))
+                // PDFKit's draw method overrides the edge-antialiasing setting.
+                cg.drawPDFPage(pageRef)
                 cg.restoreGState()
             }
         }
@@ -976,7 +987,8 @@ fileprivate class PDFContentView: UIView {
                     }
 
                     let pageIdx = layout.pageIndex[tileIdx]
-                    guard let page = doc.page(at: pageIdx), pageIdx < rects.count else {
+                    guard let page = doc.page(at: pageIdx), let pageRef = page.pageRef,
+                          pageIdx < rects.count else {
                         return
                     }
 
@@ -1012,7 +1024,12 @@ fileprivate class PDFContentView: UIView {
                         cgContext.translateBy(x: 0, y: -(bandTop * screenScale))
                         cgContext.translateBy(x: 0, y: fullPixelH)
                         cgContext.scaleBy(x: scale * screenScale, y: -(scale * screenScale))
-                        page.draw(with: .mediaBox, to: cgContext)
+                        // Match viewport capture: do not blend fractional WebKit
+                        // clipping edges with the background embedded in the PDF.
+                        cgContext.setShouldAntialias(false)
+                        cgContext.concatenate(pageRef.getDrawingTransform(.mediaBox,
+                            rect: CGRect(origin: .zero, size: pageRect.size), rotate: 0, preserveAspectRatio: true))
+                        cgContext.drawPDFPage(pageRef)
                     }
 
                     // If the tile was cancelled or the chapter changed while drawing, drop the
