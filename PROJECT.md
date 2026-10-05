@@ -19,7 +19,7 @@ MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from 
 | Folder import & scan | Scans root/secret folder for series subfolders + loose PDFs, upserts `Book`/`Chapter` rows, generates thumbnails | `ImportService`, `SettingsView`, `LibraryViewModel` |
 | PDF reader | Full-screen continuous vertical reader on a custom tiled `CALayer` renderer. UIKit handles drag and native deceleration; projected post-flick travel is capped at 1.25 viewport heights. Single tap has no scrolling action. | `ReaderView`, `ReaderViewModel`, `PDFPageView` |
 | Chapter navigation | Chapter list with sort toggle, in-reader jump-to-chapter picker, prev/next buttons, animated go-to-top/bottom actions | `ChapterListView`, `ReaderOverlayView`, `ReaderViewModel` |
-| Chapter artwork pages | Random gallery images before and after each chapter; two distinct images when available, one reused otherwise; empty galleries skipped. Artwork occupies its own full page before and after the PDF. Images stay pinned during boundary transitions and fade as a whole over a backdrop from the adjacent PDF edge. Story tiles draw above artwork and fade in during the opening transition, stay fully opaque during reading, and fade out into closing artwork; chapter content is not placed underneath the initial artwork. Original PDF page counts and saved content offsets are preserved. | `PDFPageView`, `ReaderViewModel` |
+| Chapter artwork pages | Random gallery images before and after each chapter; two distinct images when available, one reused otherwise; empty galleries skipped. Artwork occupies its own full page before and after the PDF. Images stay pinned during boundary transitions and fade as a whole over a backdrop from the adjacent PDF edge. Story tiles draw above artwork and fade in during the opening transition, stay fully opaque during reading, and fade out into closing artwork; chapter content is not placed underneath the initial artwork. Settings also offers Continuous (shared scroll) and Parallax (art moves at 75% of story speed). These spatial effects preserve full story opacity. Original PDF page counts and saved content offsets are preserved. | `PDFPageView`, `ReaderViewModel` |
 | Art album | PhotosPicker to add images, horizontal thumbnail strip, full-screen viewer w/ swipe + drag-to-dismiss | `ChapterListView` art section, `ArtViewerOverlay` |
 | Cover carousel | Swipe cover to browse art; tap to expand into full-screen viewer | `ChapterListView.coverHeader`, `ArtViewerOverlay` |
 | Cover crop | Draggable 2:3 crop box over any art image → 400×600 JPEG cover | `CoverCropOverlay`, `ArtViewerOverlay` |
@@ -30,7 +30,7 @@ MangaShelf is an iOS 18+ SwiftUI manga/comic reader that imports PDF files from 
 | Secret library | Hidden shelf behind a 5-second long-press on the settings icon; separate folder bookmark | `Book.isSecret`, `LibraryView` long-press, `SettingsView` secret section |
 | Theme & accent | 4 dark themes + 6 accent colors, persisted in UserDefaults | `ThemeManager`, `SettingsView` |
 | Splash screen | Animated launch screen (icon + title fade-in) overlaid on the library | `SplashScreenView`, `MangaShelfApp` |
-| Settings | Folder picker, rescan, open-in-Files, theme/accent, secret-folder config | `SettingsView` |
+| Settings | Folder picker, rescan, open-in-Files, theme/accent, chapter artwork transition (Fade / Continuous / Parallax), secret-folder config | `SettingsView` |
 
 ## 3. Data Layer
 
@@ -108,6 +108,7 @@ Supporting enum `BookmarkColor` (11 system colors `.red`…`.pink`); its raw val
 | `folderDataMigrated` | `folderDataMigratedToSeriesFolders` | One-time app-data→`.mangashelf/` migration flag |
 | `appTheme` | `appTheme` | Selected `AppTheme` raw value |
 | `accentTheme` | `accentTheme` | Selected `AccentTheme` raw value |
+| `artworkTransition` | `artworkTransition` | Chapter artwork effect: `fade` (default), `continuous`, or `parallax`; spatial effects use feathered artwork edges with fully opaque PDF content |
 | `libraryViewMode` | `libraryViewMode` | Grid or list (`LibraryViewMode`, via `@AppStorage`) |
 
 `Constants.swift` also defines `enum Layout` with `coverSize = 400×600` (shared by `ThumbnailService` and `CoverCropOverlay`).

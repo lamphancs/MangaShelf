@@ -11,6 +11,8 @@ import ImageIO
 
 struct PDFPageView: UIViewRepresentable {
 
+    @AppStorage(StorageKey.artworkTransition) private var artworkTransition: ArtworkTransition = .fade
+
     let pdfDocument: PDFDocument?
     let artFolderURL: URL?
     @Binding var currentPage: Int
@@ -38,6 +40,7 @@ struct PDFPageView: UIViewRepresentable {
         scrollView.delegate = context.coordinator
 
         let contentView = PDFContentView()
+        contentView.artworkTransition = artworkTransition
         contentView.backgroundColor = UIColor(Color.appBackground)
         scrollView.addSubview(contentView)
 
@@ -95,6 +98,9 @@ struct PDFPageView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         let coordinator = context.coordinator
         guard let scrollView = uiView as? UIScrollView else { return }
+
+        coordinator.contentView?.artworkTransition = artworkTransition
+        coordinator.contentView?.updateViewport(scrollView.bounds)
 
         if pdfDocument == nil && coordinator.pdfDocument != nil {
             coordinator.clearDocument()
@@ -365,6 +371,7 @@ fileprivate class PDFContentView: UIView {
     private(set) var openingArtHeight: CGFloat = 0
     /// Difference from the original PDF-only layout, which includes a top safe-area inset.
     private(set) var openingContentOffset: CGFloat = 0
+    var artworkTransition: ArtworkTransition = .fade
     private var artViews: [UIImageView] = []
     private var artTransitions: [CAGradientLayer] = []
     private var artBackdrops: [CALayer] = []
@@ -652,6 +659,10 @@ fileprivate class PDFContentView: UIView {
 
     private func updateArtEffects(_ viewport: CGRect) {
         guard artViews.count == 2, artTransitions.count == 2 else { return }
+        if artworkTransition != .fade {
+            updateScrollingArtEffects(viewport)
+            return
+        }
         func smooth(_ value: CGFloat) -> CGFloat {
             let t = min(1, max(0, value))
             return t * t * (3 - 2 * t)
@@ -686,6 +697,50 @@ fileprivate class PDFContentView: UIView {
             mask.colors = index == 0
                 ? [UIColor.black.cgColor, edgeColor]
                 : [edgeColor, UIColor.black.cgColor]
+        }
+        CATransaction.commit()
+    }
+
+    /// All spatial effects preserve PDF geometry and opacity. Masks stay on the
+    /// artwork side of each seam, so text never sits under a gradient or moving image.
+    private func updateScrollingArtEffects(_ viewport: CGRect) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pdfLayer.opacity = 1
+        let height = max(openingArtHeight, 1)
+        let closingY = pageRects.last.map { $0.offset + $0.height } ?? height
+        for index in artViews.indices {
+            let opening = index == 0
+            let origin: CGFloat = opening ? 0 : closingY
+            let seam = opening ? height : closingY
+            let view = artViews[index]
+            var y = origin
+            switch artworkTransition {
+            case .parallax:
+                // Move 25% with the viewport: on screen the art travels at 75%
+                // of story speed and arrives at its original position at each end.
+                let travel = min(height, max(0, viewport.minY - (opening ? 0 : closingY - height)))
+                y += (travel - (opening ? 0 : height)) * 0.25
+            default:
+                break
+            }
+            view.frame = CGRect(x: 0, y: y, width: contentWidth, height: height)
+            let visible = opening ? viewport.minY < seam : viewport.maxY > seam
+            view.alpha = visible ? 1 : 0
+            let backdrop = artBackdrops[index]
+            backdrop.frame = CGRect(x: 0, y: origin, width: contentWidth, height: height)
+            backdrop.isHidden = !visible
+            let mask = artTransitions[index]
+            mask.frame = view.bounds
+            let band = min(96, height * 0.2)
+            // Clamp stops during overscroll; stop order remains monotonic.
+            let boundary = seam - y
+            let start = opening ? boundary - band : boundary
+            let alphas: [CGFloat] = opening ? [1, 0.85, 0.5, 0.15, 0] : [0, 0.15, 0.5, 0.85, 1]
+            mask.locations = (0..<5).map { step in
+                NSNumber(value: Double(min(1, max(0, (start + band * CGFloat(step) / 4) / height))))
+            }
+            mask.colors = alphas.map { UIColor.black.withAlphaComponent($0).cgColor }
         }
         CATransaction.commit()
     }

@@ -20,5 +20,36 @@ enum StorageKey {
     static let folderDataMigrated = "folderDataMigratedToSeriesFolders"
     static let appTheme = "appTheme"
     static let accentTheme = "accentTheme"
+    static let artworkTransition = "artworkTransition"
     static let libraryViewMode = "libraryViewMode"
+}
+
+/// Raw values are persisted in UserDefaults; keep them stable across releases.
+enum ArtworkTransition: String, CaseIterable, Identifiable {
+    case fade
+    case continuous
+    case parallax
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .fade: "Fade"
+        case .continuous: "Continuous"
+        case .parallax: "Parallax"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .fade: "circle.lefthalf.filled"
+        case .continuous: "arrow.down"
+        case .parallax: "square.3.layers.3d"
+        }
+    }
+    var description: String {
+        switch self {
+        case .fade: "Artwork stays in place and fades into the story as you scroll."
+        case .continuous: "Artwork and story scroll together, joined by a soft edge."
+        case .parallax: "Artwork scrolls a little slower than the story for a gentle sense of depth."
+        }
+    }
 }

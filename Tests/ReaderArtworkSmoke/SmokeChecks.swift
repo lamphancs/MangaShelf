@@ -174,6 +174,60 @@ func runReaderArtworkChecks() async throws -> String {
     coordinator.scrollToOffset(400)
     try check(renderedViews[0].alpha == 0 && content.pageRects[0].offset == scroll.contentOffset.y,
               "First PDF page starts fully uncovered when opening artwork finishes")
+    // Switching effects must preserve document geometry and saved positions.
+    let previousOffset = scroll.contentOffset
+    let previousSize = scroll.contentSize
+    content.artworkTransition = .continuous
+    coordinator.scrollToOffset(200)
+    try check(livePDF.opacity == 1 && renderedViews[0].alpha == 1,
+              "Continuous mode preserves full opacity for artwork and story")
+    try check(renderedViews[0].frame.minY == 0 && renderedViews[0].frame.maxY == content.pageRects[0].offset,
+              "Continuous opening artwork scrolls in document coordinates with no gap")
+    coordinator.scrollToOffset(endOffset - 200)
+    let storyEnd = content.pageRects.last!.offset + content.pageRects.last!.height
+    try check(renderedViews[1].frame.minY == storyEnd && livePDF.opacity == 1,
+              "Continuous closing artwork meets the story without fading its text")
+    let continuousMask = renderedViews[1].layer.mask as! CAGradientLayer
+    try check((continuousMask.colors!.first as! CGColor).alpha == 0 &&
+              (continuousMask.colors!.last as! CGColor).alpha == 1,
+              "Closing seam feathers only the artwork edge")
+    coordinator.scrollToOffset(200)
+    try check(renderedViews[0].frame.minY == 0 && scroll.contentSize == previousSize,
+              "Reverse scrolling and mode changes preserve continuous layout")
+    for effect in [ArtworkTransition.parallax] {
+        content.artworkTransition = effect
+        coordinator.scrollToOffset(200)
+        let openingFrame = renderedViews[0].frame
+        let expectedY: CGFloat = 50
+        try check(openingFrame.minY == expectedY && livePDF.opacity == 1,
+                  "\(effect.title) has distinct opening motion and opaque story pixels")
+        let openingMask = renderedViews[0].layer.mask as! CAGradientLayer
+        let openingStops = openingMask.locations!.map { $0.doubleValue }
+        try check(openingStops == openingStops.sorted() && openingStops.allSatisfy { (0...1).contains($0) },
+                  "\(effect.title) keeps gradient stops ordered within artwork")
+        let band = (openingStops.last! - openingStops.first!) * 400
+        try check(abs(band - 80) < 0.01,
+                  "\(effect.title) uses the intended seam width")
+        coordinator.scrollToOffset(endOffset - 200)
+        let expectedClosingY = storyEnd - 50
+        try check(renderedViews[1].frame.minY == expectedClosingY && livePDF.opacity == 1,
+                  "\(effect.title) mirrors the effect at the closing seam")
+        coordinator.scrollToOffset(endOffset)
+        try check(renderedViews[1].alpha == 1 && renderedViews[0].alpha == 0,
+                  "\(effect.title) ends on closing artwork alone")
+        coordinator.scrollToOffset(200)
+        try check(renderedViews[0].frame == openingFrame && scroll.contentSize == previousSize,
+                  "\(effect.title) reverses without changing layout or progress coordinates")
+        coordinator.scrollToOffset(-30)
+        try check(renderedViews[0].alpha == 1 && livePDF.opacity == 1,
+                  "\(effect.title) tolerates top overscroll")
+    }
+    content.artworkTransition = .fade
+    coordinator.scrollToOffset(200)
+    try check(abs(livePDF.opacity - 0.5) < 0.001 && renderedViews[0].frame.minY == 200,
+              "Switching back restores pinned fade behavior")
+    coordinator.scrollToOffset(previousOffset.y)
+
     let snapshotURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("pinned-fade.png")
     try snapshot.pngData()!.write(to: snapshotURL)

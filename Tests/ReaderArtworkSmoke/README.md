@@ -15,3 +15,7 @@ transition opacity, PDF page boundaries, display resolution, and JPEG encoding f
 Fast-scroll checks cover directional prefetch with a fixed window, visible-tile priority, reverse scrolling, rapid jumps through a tall PDF, chapter replacement during rendering, correct final displayed pixels, and bounded retained tiles. Smoothness still needs profiling on a physical device with representative PDFs.
 
 Reader flick checks verify UIKit's native deceleration remains enabled and its projected travel is capped at 1.25 viewport heights in either direction.
+
+Continuous transition checks cover opening/closing seams, fully opaque story content, reverse scrolling, unchanged geometry, and switching back to Fade.
+
+Parallax checks cover distinct motion and seam widths, opening/closing endpoints, ordered mask stops, reverse scrolling, overscroll, and preserved story opacity and layout.

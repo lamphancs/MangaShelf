@@ -15,6 +15,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ThemeManager.self) private var theme
 
+    @AppStorage(StorageKey.artworkTransition) private var artworkTransition: ArtworkTransition = .fade
+
     @State private var rootFolderName: String?
     @State private var isScanning = false
     @State private var scanMessage: String?
@@ -37,6 +39,7 @@ struct SettingsView: View {
                 VStack(spacing: 24) {
                     themeSection
                     accentSection
+                    readerSection
                     if isSecretMode {
                         secretLibrarySection
                     } else {
@@ -161,6 +164,52 @@ struct SettingsView: View {
             .padding(12)
             .background(theme.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    // MARK: - Reader Section
+
+    private var readerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CHAPTER ARTWORK TRANSITION")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                ForEach(ArtworkTransition.allCases) { transition in
+                    Button {
+                        artworkTransition = transition
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: transition.symbol)
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(transition.title)
+                                    .foregroundStyle(.white)
+                                Text(transition.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: artworkTransition == transition ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(artworkTransition == transition ? theme.accent : .secondaryText)
+                        }
+                        .padding(14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(artworkTransition == transition ? .isSelected : [])
+                }
+            }
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text("Applies to opening and closing artwork from a series’ art album.")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.horizontal, 4)
         }
     }
 
