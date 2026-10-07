@@ -39,6 +39,7 @@ struct ReaderView: View {
                 artFolderURL: viewModel.artFolderURL,
                 currentPage: $viewModel.currentPage,
                 initialOffset: viewModel.initialOffset,
+                restoreProgress: viewModel.restoreProgress,
                 onPageChange: { newPage in
                     viewModel.updatePage(newPage, modelContext: modelContext)
                 },
@@ -50,6 +51,9 @@ struct ReaderView: View {
                 },
                 onOffsetReady: { provider in
                     viewModel.currentOffsetProvider = provider
+                },
+                onProgressReady: { provider in
+                    viewModel.currentProgressProvider = provider
                 },
                 onScrollToTopReady: { action in
                     viewModel.scrollToTop = action
@@ -146,6 +150,27 @@ struct ReaderView: View {
                     Spacer()
                     Spacer()
                     Spacer()
+                    if viewModel.hasBothLanguages {
+                        Button {
+                            UIImpactFeedbackGenerator.impact(.medium)
+                            viewModel.toggleLanguage(modelContext: modelContext)
+                        } label: {
+                            Text(viewModel.isReadingEnglish ? "EN" : "VN")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 44, height: 44)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                        }
+                        .disabled(!viewModel.canToggleLanguage)
+                        .opacity(viewModel.canToggleLanguage ? 1 : 0.3)
+                        .accessibilityLabel(viewModel.isReadingEnglish ? "Reading English" : "Reading Vietnamese")
+                        .accessibilityHint(viewModel.canToggleLanguage
+                            ? "Switch to the \(viewModel.isReadingEnglish ? "Vietnamese" : "English") version of this chapter"
+                            : "This chapter is not available in the other language")
+                    }
+
                     Button {
                         guard viewModel.canBookmarkCurrentChapter else { return }
                         // Existing bookmarks open the editor for review instead of being removed instantly.

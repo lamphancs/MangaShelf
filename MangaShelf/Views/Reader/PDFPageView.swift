@@ -19,12 +19,18 @@ struct PDFPageView: UIViewRepresentable {
     /// Exact vertical scroll offset (content points) to restore on first load. `0` falls back
     /// to page-based restore (`currentPage`), which is what pre-offset saved data will have.
     let initialOffset: CGFloat
+    /// Fraction (0...1) of the PDF content to open the next loaded document at, used when
+    /// switching the same chapter between languages. `0` = open at the top.
+    var restoreProgress: CGFloat = 0
     let onPageChange: (Int) -> Void
     let onTap: () -> Void
     var onCaptureReady: ((@escaping () -> (UIImage, CGFloat)?) -> Void)? = nil
     /// Hands the parent a closure that reads the live `contentOffset.y` on demand, so progress
     /// can be persisted at the exact scroll position without observing every scroll frame.
     var onOffsetReady: ((@escaping () -> CGFloat) -> Void)? = nil
+    /// Hands the parent a closure that reads how far through the PDF content (0...1) the
+    /// viewport is, or `nil` while no document is laid out.
+    var onProgressReady: ((@escaping () -> CGFloat?) -> Void)? = nil
     /// Hands the parent a `scrollToTop(completion:)` closure: it scrolls (animated) to the top
     /// of the current chapter and calls `completion` once the top tiles have finished rendering.
     var onScrollToTopReady: ((@escaping (@escaping () -> Void) -> Void) -> Void)? = nil
@@ -59,6 +65,10 @@ struct PDFPageView: UIViewRepresentable {
             // Persist in original PDF coordinates so gallery changes never shift progress.
             return max(0, (coordinator.scrollView?.contentOffset.y ?? 0)
                        - (coordinator.contentView?.openingContentOffset ?? 0))
+        })
+
+        onProgressReady?({ [weak coordinator = context.coordinator] in
+            coordinator?.scrollProgress()
         })
 
         onScrollToTopReady?({ [weak coordinator = context.coordinator] completion in
@@ -110,7 +120,8 @@ struct PDFPageView: UIViewRepresentable {
         if let doc = pdfDocument, coordinator.pdfDocument !== doc {
             coordinator.loadDocument(
                 doc, width: scrollView.bounds.width, artFolderURL: artFolderURL,
-                restorePage: currentPage
+                restorePage: currentPage, restoreProgress: restoreProgress,
+                onRestore: restoreProgress > 0 ? onRestoreComplete : nil
             )
             return
         }
@@ -147,7 +158,7 @@ struct PDFPageView: UIViewRepresentable {
 
         func loadDocument(
             _ doc: PDFDocument, width: CGFloat, artFolderURL: URL?,
-            restorePage: Int, restoreOffset: CGFloat = 0,
+            restorePage: Int, restoreOffset: CGFloat = 0, restoreProgress: CGFloat = 0,
             onRestore: (() -> Void)? = nil
         ) {
             clearDocument()
@@ -166,7 +177,10 @@ struct PDFPageView: UIViewRepresentable {
                 self.pageCount = contentView.pageRects.count
                 self.scrollView?.contentSize = contentView.bounds.size
                 self.pendingRestoreOffset = nil
-                if restoreOffset > 0 {
+                if restoreProgress > 0 {
+                    self.scrollToProgress(restoreProgress)
+                    self.awaitTargetRendered { onRestore?() }
+                } else if restoreOffset > 0 {
                     self.scrollToOffset(restoreOffset + contentView.openingContentOffset)
                     self.awaitTargetRendered { onRestore?() }
                 } else {
@@ -214,6 +228,28 @@ struct PDFPageView: UIViewRepresentable {
             let target = CGRect(x: 0, y: clamped, width: scrollView.bounds.width, height: scrollView.bounds.height)
             pendingTargetRect = target
             contentView?.updateViewport(target)
+        }
+
+        /// Scrollable range of the PDF pages alone (excluding opening/closing artwork), so a
+        /// progress fraction maps between two documents of different lengths.
+        private var pdfScrollRange: (start: CGFloat, length: CGFloat)? {
+            guard let scrollView, let first = contentView?.pageRects.first,
+                  let last = contentView?.pageRects.last else { return nil }
+            let end = last.offset + last.height
+            return (first.offset, max(0, end - scrollView.bounds.height - first.offset))
+        }
+
+        /// How far through the PDF content (0...1) the viewport's top edge is.
+        func scrollProgress() -> CGFloat? {
+            guard let scrollView, let range = pdfScrollRange else { return nil }
+            guard range.length > 0 else { return 0 }
+            return min(1, max(0, (scrollView.contentOffset.y - range.start) / range.length))
+        }
+
+        /// Jumps to the same relative position (0...1) within the PDF content.
+        func scrollToProgress(_ progress: CGFloat) {
+            guard let range = pdfScrollRange else { return }
+            scrollToOffset(range.start + min(1, max(0, progress)) * range.length)
         }
 
         /// Scrolls (animated) to the very top of the current chapter and syncs the reported

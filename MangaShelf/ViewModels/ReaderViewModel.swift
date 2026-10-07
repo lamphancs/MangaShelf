@@ -21,11 +21,33 @@ final class ReaderViewModel {
     var pdfDocument: PDFDocument?
 
     var currentChapterIndex: Int
-    let sortedChapters: [Chapter]
+    private(set) var sortedChapters: [Chapter]
+
+    /// Chapters of the language not currently being read (VN ⇄ EN), used by the language toggle.
+    private var otherLanguageChapters: [Chapter]
 
     var currentChapter: Chapter? {
         guard book.isSeries else { return nil }
         return sortedChapters[safe: currentChapterIndex]
+    }
+
+    /// True when the series has chapters in both VN and EN.
+    var hasBothLanguages: Bool {
+        !sortedChapters.isEmpty && !otherLanguageChapters.isEmpty
+    }
+
+    var isReadingEnglish: Bool {
+        currentChapter?.isEnglish ?? false
+    }
+
+    /// Index (in `otherLanguageChapters`) of the chapter with the same number as the current one.
+    private var counterpartChapterIndex: Int? {
+        guard let number = currentChapter?.extractedNumber.flatMap({ Int($0) }) else { return nil }
+        return otherLanguageChapters.firstIndex { $0.extractedNumber.flatMap { Int($0) } == number }
+    }
+
+    var canToggleLanguage: Bool {
+        counterpartChapterIndex != nil && !isLoadingChapter
     }
 
     var currentChapterTotalPages: Int {
@@ -48,6 +70,13 @@ final class ReaderViewModel {
 
     /// Reads the live `contentOffset.y` from the scroll view on demand (wired by `PDFPageView`).
     var currentOffsetProvider: (() -> CGFloat)?
+
+    /// Reads how far (0...1) through the current chapter's pages the reader is (wired by `PDFPageView`).
+    var currentProgressProvider: (() -> CGFloat?)?
+
+    /// Relative position to open the next loaded chapter at. Set only when switching language,
+    /// so the other version opens at the same point (e.g. 40% → 40%); `0` otherwise.
+    var restoreProgress: CGFloat = 0
 
     /// Scrolls (animated) to the top of the current chapter, calling the completion once the
     /// top has finished rendering (wired by `PDFPageView`).
@@ -93,8 +122,10 @@ final class ReaderViewModel {
         if book.isSeries {
             let allChapters = book.sortedChapters
             let selected = allChapters[safe: book.currentChapterIndex] ?? allChapters.first
-            let chapters = allChapters.filter { $0.isEnglish == (selected?.isEnglish ?? false) }
+            let isEnglish = selected?.isEnglish ?? false
+            let chapters = allChapters.filter { $0.isEnglish == isEnglish }
             self.sortedChapters = chapters
+            self.otherLanguageChapters = allChapters.filter { $0.isEnglish != isEnglish }
             let chapterIdx = chapters.firstIndex { $0.id == selected?.id } ?? 0
             self.currentChapterIndex = chapterIdx
 
@@ -114,6 +145,7 @@ final class ReaderViewModel {
             }
         } else {
             self.sortedChapters = []
+            self.otherLanguageChapters = []
             self.currentChapterIndex = 0
             self.currentPage = book.lastReadPage
             self.initialOffset = CGFloat(book.lastReadOffset)
@@ -293,8 +325,20 @@ final class ReaderViewModel {
         navigateToChapter(index: currentChapterIndex - 1, modelContext: modelContext)
     }
 
-    private func navigateToChapter(index: Int, modelContext: ModelContext) {
-        guard let chapter = sortedChapters[safe: index],
+    /// Switches to the same chapter number in the other language (VN ⇄ EN).
+    func toggleLanguage(modelContext: ModelContext) {
+        guard !isLoadingChapter, let index = counterpartChapterIndex else { return }
+        let progress = currentProgressProvider?() ?? 0
+        navigateToChapter(index: index, switchingLanguage: true, progress: progress, modelContext: modelContext)
+    }
+
+    /// Loads the chapter at `index`. When `switchingLanguage` is true, `index` refers to
+    /// `otherLanguageChapters`, and the two lists are swapped once the new chapter has loaded.
+    /// `progress` (0...1) is the relative position to open the new chapter at.
+    private func navigateToChapter(index: Int, switchingLanguage: Bool = false, progress: CGFloat = 0,
+                                   modelContext: ModelContext) {
+        let targetChapters = switchingLanguage ? otherLanguageChapters : sortedChapters
+        guard let chapter = targetChapters[safe: index],
               let folder = folderURL else { return }
 
         // Flush pending bookmark changes to both SwiftData and portable series metadata
@@ -316,7 +360,17 @@ final class ReaderViewModel {
             let doc = await chapterLoadTask?.value
             guard !Task.isCancelled else { return }
 
+            if switchingLanguage {
+                otherLanguageChapters = sortedChapters
+                sortedChapters = targetChapters
+            }
             currentChapterIndex = index
+            // Must be set before `pdfDocument`: `PDFPageView` reads it when the new document loads.
+            restoreProgress = doc == nil ? 0 : progress
+            if restoreProgress > 0 {
+                isRestoringPosition = true
+                beginRestoreTimeout()
+            }
             pdfDocument = doc
             book.currentChapterIndex = storedChapterIndex
             book.lastReadDate = Date()
