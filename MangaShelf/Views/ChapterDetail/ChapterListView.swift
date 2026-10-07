@@ -267,7 +267,7 @@ struct ChapterListView: View {
                 .padding(.horizontal, 32)
 
             HStack(spacing: 6) {
-                Label("\(book.sortedChapters.count) chapters", systemImage: "book.fill")
+                Label("\(languageChapters.count) chapters", systemImage: "book.fill")
                     .font(.subheadline)
                     .foregroundColor(.secondaryText)
 
