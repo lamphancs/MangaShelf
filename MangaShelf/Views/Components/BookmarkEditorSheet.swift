@@ -10,6 +10,8 @@ struct BookmarkEditorSheet: View {
     @Binding var bookmarkNote: String
     @Binding var bookmarkColor: BookmarkColor
     let onSave: () -> Void
+    /// When provided, the sheet shows a destructive "Delete Bookmark" action.
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         NavigationStack {
@@ -46,6 +48,18 @@ struct BookmarkEditorSheet: View {
                             .foregroundColor(.secondaryText)
                     } header: {
                         Text("Chapter")
+                    }
+                }
+
+                if let onDelete {
+                    Section {
+                        Button(role: .destructive) {
+                            onDelete()
+                            dismiss()
+                        } label: {
+                            Label("Delete Bookmark", systemImage: "bookmark.slash")
+                                .foregroundColor(.red)
+                        }
                     }
                 }
             }

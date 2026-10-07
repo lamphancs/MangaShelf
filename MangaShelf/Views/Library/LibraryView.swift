@@ -115,6 +115,7 @@ struct LibraryView: View {
                             .padding(.bottom, 40)
                         }
                     }
+                    .scrollIndicators(.hidden)
                 }
 
                 if viewModel.isLoading {

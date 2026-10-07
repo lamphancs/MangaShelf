@@ -73,6 +73,7 @@ struct ChapterListView: View {
                     .padding(.bottom, 40)
             }
         }
+        .scrollIndicators(.hidden)
         .refreshable { await syncChapters() }
         .background(theme.libraryBackground)
         .navigationTitle(book.title)

@@ -22,6 +22,7 @@ struct ReaderView: View {
     @State private var showBookmarkEditor = false
     @State private var bookmarkNote = ""
     @State private var bookmarkColor: BookmarkColor = .red
+    @State private var isEditingExistingBookmark = false
 
     init(book: Book) {
         self.book = book
@@ -147,14 +148,18 @@ struct ReaderView: View {
                     Spacer()
                     Button {
                         guard viewModel.canBookmarkCurrentChapter else { return }
-                        if viewModel.currentBookmark != nil {
-                            viewModel.removeCurrentBookmark(modelContext: modelContext)
+                        // Existing bookmarks open the editor for review instead of being removed instantly.
+                        if let existing = viewModel.currentBookmark {
+                            bookmarkNote = existing.note
+                            bookmarkColor = existing.bookmarkColor
+                            isEditingExistingBookmark = true
                         } else {
                             bookmarkNote = ""
                             bookmarkColor = .red
-                            viewModel.beginBookmarkEditing()
-                            showBookmarkEditor = true
+                            isEditingExistingBookmark = false
                         }
+                        viewModel.beginBookmarkEditing()
+                        showBookmarkEditor = true
                     } label: {
                         Image(systemName: viewModel.currentBookmark == nil ? "bookmark" : "bookmark.fill")
                             .font(.system(size: 16, weight: .semibold))
@@ -166,7 +171,7 @@ struct ReaderView: View {
                     }
                     .disabled(!viewModel.canBookmarkCurrentChapter)
                     .opacity(viewModel.canBookmarkCurrentChapter ? 1 : 0.3)
-                    .accessibilityLabel(viewModel.currentBookmark == nil ? "Add Bookmark" : "Remove Bookmark")
+                    .accessibilityLabel(viewModel.currentBookmark == nil ? "Add Bookmark" : "Edit Bookmark")
 
                     Button {
                         captureScreenshot()
@@ -239,13 +244,16 @@ struct ReaderView: View {
             viewModel.endBookmarkEditing()
         }) {
             BookmarkEditorSheet(
-                title: "Add Bookmark",
+                title: isEditingExistingBookmark ? "Edit Bookmark" : "Add Bookmark",
                 chapterTitle: viewModel.currentChapter?.displayName,
                 bookmarkNote: $bookmarkNote,
                 bookmarkColor: $bookmarkColor,
                 onSave: {
                     viewModel.saveBookmark(note: bookmarkNote, color: bookmarkColor, modelContext: modelContext)
-                }
+                },
+                onDelete: isEditingExistingBookmark ? {
+                    viewModel.removeCurrentBookmark(modelContext: modelContext)
+                } : nil
             )
         }
         .statusBar(hidden: !viewModel.isOverlayVisible)
