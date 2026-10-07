@@ -324,6 +324,56 @@ final class ImportService {
         await BookDataService.shared.save(book: book, seriesFolderURL: folderURL)
     }
 
+    // MARK: - Rename Chapter
+
+    /// Renames a chapter PDF on disk, keeping it in the same folder (series root or EN/).
+    /// The chapter row is re-keyed to the new filename before re-syncing, so its reading
+    /// progress, the current chapter, and bookmarks follow it to its new sort position.
+    @MainActor
+    func renameChapter(_ chapter: Chapter, to newName: String, in book: Book, modelContext: ModelContext) async throws {
+        let newFile = try CaptureFileName.filename(newName)
+        guard book.isSeries, let folderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        let (rootURL, _) = try LocalFileService.shared.resolveBookmark(bookmarkData)
+        guard rootURL.startAccessingSecurityScopedResource() else {
+            throw FileServiceError.bookmarkResolutionFailed
+        }
+        defer { rootURL.stopAccessingSecurityScopedResource() }
+
+        let oldFilename = chapter.filename
+        let directory = (oldFilename as NSString).deletingLastPathComponent
+        let newFilename = directory.isEmpty ? newFile : "\(directory)/\(newFile)"
+        guard newFilename != oldFilename else { return }
+
+        let fm = FileManager.default
+        let folderURL = rootURL.appendingPathComponent(folderName)
+        let oldURL = chapter.pdfURL(folderURL: folderURL)
+        let newURL = folderURL.appendingPathComponent(newFilename)
+        // A case-only rename resolves to the same file on case-insensitive volumes.
+        let isCaseOnly = newFilename.caseInsensitiveCompare(oldFilename) == .orderedSame
+        if !isCaseOnly, fm.fileExists(atPath: newURL.path) {
+            throw NSError(domain: "RenameChapter", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "A chapter named \(newFile) already exists."])
+        }
+        // `moveItem` never overwrites an existing item.
+        try fm.moveItem(at: oldURL, to: newURL)
+
+        chapter.filename = newFilename
+        do {
+            try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
+            book.folderSignature = folderSignature(at: folderURL)
+            try modelContext.save()
+        } catch {
+            // Keep disk and library in agreement: undo the move if the library can't be updated.
+            try? fm.moveItem(at: newURL, to: oldURL)
+            chapter.filename = oldFilename
+            throw error
+        }
+        await BookDataService.shared.save(book: book, seriesFolderURL: folderURL)
+    }
+
     // MARK: - Rename
 
     func renameBook(_ book: Book, to newTitle: String, modelContext: ModelContext) async throws {

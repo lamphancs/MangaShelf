@@ -35,6 +35,10 @@ struct ChapterListView: View {
     @State private var artViewerItem: ArtViewerItem?
     @State private var coverDisplayIndex: Int = 0
     @State private var deleteErrorMessage: String?
+    @State private var renamingChapterID: UUID?
+    @State private var renameText = ""
+    @State private var renameErrorMessage: String?
+    @FocusState private var isRenameFieldFocused: Bool
 
     private struct ArtViewerItem: Identifiable {
         let id = UUID()
@@ -135,6 +139,17 @@ struct ChapterListView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(deleteErrorMessage ?? "")
+        }
+        .alert(
+            "Couldn't Rename Chapter",
+            isPresented: Binding(
+                get: { renameErrorMessage != nil },
+                set: { if !$0 { renameErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(renameErrorMessage ?? "")
         }
         .onChange(of: selectedPhotoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
@@ -540,41 +555,51 @@ struct ChapterListView: View {
             }
             ForEach(Array(displayChapters.enumerated()), id: \.element.id) { displayIndex, chapter in
                 let originalIndex = chapter.sortOrder
-                Button {
-                    book.currentChapterIndex = originalIndex
-                    chapter.lastReadPage = 0
-                    chapter.lastReadOffset = 0
-                    try? modelContext.save()
-                    showReader = true
-                } label: {
-                    chapterRow(chapter: chapter, index: originalIndex)
-                }
-                .contextMenu {
+                if renamingChapterID == chapter.id {
+                    chapterRenameRow(chapter: chapter)
+                } else {
                     Button {
-                        bookmarkChapterIndex = originalIndex
-                        bookmarkNote = ""
-                        bookmarkColor = .red
-                        showAddBookmark = true
+                        book.currentChapterIndex = originalIndex
+                        chapter.lastReadPage = 0
+                        chapter.lastReadOffset = 0
+                        try? modelContext.save()
+                        showReader = true
                     } label: {
-                        Label("Add Bookmark", systemImage: "bookmark.fill")
+                        chapterRow(chapter: chapter, index: originalIndex)
                     }
-
-                    if let existing = bookmarkFor(index: originalIndex) {
-                        Button(role: .destructive) {
-                            modelContext.delete(existing)
-                            try? modelContext.save()
-                            saveBookData()
+                    .contextMenu {
+                        Button {
+                            bookmarkChapterIndex = originalIndex
+                            bookmarkNote = ""
+                            bookmarkColor = .red
+                            showAddBookmark = true
                         } label: {
-                            Label("Remove Bookmark", systemImage: "bookmark.slash")
+                            Label("Add Bookmark", systemImage: "bookmark.fill")
                         }
-                    }
 
-                    Divider()
+                        if let existing = bookmarkFor(index: originalIndex) {
+                            Button(role: .destructive) {
+                                modelContext.delete(existing)
+                                try? modelContext.save()
+                                saveBookData()
+                            } label: {
+                                Label("Remove Bookmark", systemImage: "bookmark.slash")
+                            }
+                        }
 
-                    Button(role: .destructive) {
-                        Task { await deleteChapter(chapter) }
-                    } label: {
-                        Label("Delete Chapter", systemImage: "trash")
+                        Divider()
+
+                        Button {
+                            beginRename(chapter)
+                        } label: {
+                            Label("Rename Chapter", systemImage: "pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            Task { await deleteChapter(chapter) }
+                        } label: {
+                            Label("Delete Chapter", systemImage: "trash")
+                        }
                     }
                 }
 
@@ -612,6 +637,89 @@ struct ChapterListView: View {
         } catch {
             deleteErrorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Inline Rename
+
+    /// The chapter's filename without its folder prefix (e.g. "EN/") or ".pdf" extension.
+    private func filenameStem(of chapter: Chapter) -> String {
+        ((chapter.filename as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
+
+    private func beginRename(_ chapter: Chapter) {
+        renameText = filenameStem(of: chapter)
+        renamingChapterID = chapter.id
+    }
+
+    private func cancelRename() {
+        renamingChapterID = nil
+        isRenameFieldFocused = false
+    }
+
+    private func commitRename(_ chapter: Chapter) {
+        // Clearing the ID first makes the focus-loss handler a no-op, so a commit runs once.
+        guard renamingChapterID == chapter.id else { return }
+        let newName = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        cancelRename()
+        guard !newName.isEmpty, newName != filenameStem(of: chapter) else { return }
+
+        Task {
+            isSyncing = true
+            defer { isSyncing = false }
+            do {
+                try await ImportService().renameChapter(chapter, to: newName, in: book, modelContext: modelContext)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                renameErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func chapterRenameRow(chapter: Chapter) -> some View {
+        HStack(spacing: 14) {
+            Text("\((languageChapters.firstIndex { $0.id == chapter.id } ?? 0) + 1)")
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .foregroundColor(theme.accent)
+                .frame(width: 32, alignment: .center)
+
+            TextField("Chapter name", text: $renameText)
+                .font(.subheadline)
+                .foregroundColor(.white)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.done)
+                .focused($isRenameFieldFocused)
+                .onSubmit { commitRename(chapter) }
+                .task {
+                    // Wait for the context menu to finish dismissing, otherwise focus is dropped.
+                    try? await Task.sleep(for: .milliseconds(400))
+                    isRenameFieldFocused = true
+                }
+                .onChange(of: isRenameFieldFocused) { _, focused in
+                    // Tapping elsewhere commits, matching the Files app.
+                    if !focused { commitRename(chapter) }
+                }
+
+            Button(action: cancelRename) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.tertiaryText)
+            }
+            .accessibilityLabel("Cancel rename")
+
+            Button {
+                commitRename(chapter)
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accent)
+            }
+            .accessibilityLabel("Save name")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+        .background(theme.accent.opacity(0.08))
     }
 
     private var addBookmarkSheet: some View {
