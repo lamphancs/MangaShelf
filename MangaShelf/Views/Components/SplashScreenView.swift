@@ -7,6 +7,13 @@ struct SplashScreenView: View {
     @State private var iconVisible = false
     @State private var buttonVisible = false
     @State private var hasEntered = false
+    @State private var iconTapCount = 0
+    @State private var lastIconTap: Date?
+
+    /// Consecutive icon taps required to unlock the secret library.
+    private let secretTapCount = 5
+    /// Maximum gap between taps for them to count as consecutive.
+    private let secretTapInterval: TimeInterval = 0.6
 
     private let foreground = Color(red: 0.91, green: 0.87, blue: 0.81)
 
@@ -22,6 +29,8 @@ struct SplashScreenView: View {
                 // Match the approved preview: black pixels merge into the backdrop.
                 .blendMode(.screen)
                 .opacity(iconVisible ? 1 : 0)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: registerIconTap)
                 .accessibilityLabel("MangaShelf")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -41,12 +50,6 @@ struct SplashScreenView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
-            .highPriorityGesture(
-                LongPressGesture(minimumDuration: 5, maximumDistance: 10)
-                    .onEnded { _ in
-                        enterLibrary(isSecretMode: true)
-                    }
-            )
             .accessibilityLabel("Enter Library")
             .accessibilityHidden(!buttonVisible)
             .disabled(!buttonVisible || hasEntered)
@@ -72,8 +75,25 @@ struct SplashScreenView: View {
         }
     }
 
+    private func registerIconTap() {
+        guard !hasEntered else { return }
+        let now = Date()
+        // Restart the sequence if the user paused too long between taps.
+        if let lastIconTap, now.timeIntervalSince(lastIconTap) <= secretTapInterval {
+            iconTapCount += 1
+        } else {
+            iconTapCount = 1
+        }
+        lastIconTap = now
+
+        if iconTapCount >= secretTapCount {
+            enterLibrary(isSecretMode: true)
+        }
+    }
+
     private func enterLibrary(isSecretMode: Bool) {
-        guard buttonVisible, !hasEntered else { return }
+        // The secret entry doesn't wait for the Enter button to fade in.
+        guard isSecretMode || buttonVisible, !hasEntered else { return }
         hasEntered = true
         if isSecretMode {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
