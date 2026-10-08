@@ -42,16 +42,21 @@ struct ArtViewerOverlay: View {
     let onDeleteFile: (String) async -> Void
     let onSetCover: (UIImage) async -> Void
     var onOpenInFolder: (() -> Void)?
+    /// Returns an action that opens the reader where the art (by filename) was captured,
+    /// or `nil` when its position is unknown. The viewer dismisses itself after running it.
+    var openInReaderAction: ((String) -> (() -> Void)?)?
 
     init(artImages: [ArtItem], initialIndex: Int,
          onDeleteFile: @escaping (String) async -> Void,
          onSetCover: @escaping (UIImage) async -> Void,
-         onOpenInFolder: (() -> Void)? = nil) {
+         onOpenInFolder: (() -> Void)? = nil,
+         openInReaderAction: ((String) -> (() -> Void)?)? = nil) {
         _artImages = State(initialValue: artImages)
         _currentIndex = State(initialValue: min(initialIndex, max(artImages.count - 1, 0)))
         self.onDeleteFile = onDeleteFile
         self.onSetCover = onSetCover
         self.onOpenInFolder = onOpenInFolder
+        self.openInReaderAction = openInReaderAction
     }
 
     var body: some View {
@@ -159,6 +164,16 @@ struct ArtViewerOverlay: View {
                         let isCoverCurrent = currentIndex >= 0 && currentIndex < artImages.count && artImages[currentIndex].isCover
 
                         Menu {
+                            if !isCoverCurrent,
+                               let openInReader = openInReaderAction?(artImages[currentIndex].id) {
+                                Button {
+                                    openInReader()
+                                    performDismiss(direction: -1)
+                                } label: {
+                                    Label("Open in Reader", systemImage: "book")
+                                }
+                            }
+
                             if !isCoverCurrent {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.25)) {

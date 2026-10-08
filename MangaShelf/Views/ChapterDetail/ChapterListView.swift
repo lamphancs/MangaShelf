@@ -33,6 +33,8 @@ struct ChapterListView: View {
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var artViewerItem: ArtViewerItem?
+    /// Set by "Open in Reader" so the reader is presented once the art viewer has dismissed.
+    @State private var openReaderAfterArtViewer = false
     @State private var coverDisplayIndex: Int = 0
     @State private var deleteErrorMessage: String?
     @State private var renamingChapterID: UUID?
@@ -113,6 +115,10 @@ struct ChapterListView: View {
             WebPageCaptureView(url: link.url, book: book, isEnglish: link.isEnglish)
         }
         .fullScreenCover(item: $artViewerItem, onDismiss: {
+            if openReaderAfterArtViewer {
+                openReaderAfterArtViewer = false
+                showReader = true
+            }
             Task { await loadArtImages() }
         }) { item in
             ArtViewerOverlay(
@@ -126,6 +132,9 @@ struct ChapterListView: View {
                 },
                 onOpenInFolder: {
                     openArtFolder()
+                },
+                openInReaderAction: { filename in
+                    openInReaderAction(forArtFilename: filename)
                 }
             )
         }
@@ -267,6 +276,42 @@ struct ChapterListView: View {
     private func handleCoverTap() {
         guard !coverCarouselItems.isEmpty else { return }
         artViewerItem = ArtViewerItem(index: coverDisplayIndex)
+    }
+
+    // MARK: - Open Art in Reader
+
+    /// Returns an action that opens the reader at the position a reader screenshot was taken,
+    /// or `nil` if the filename has no position or its chapter no longer exists.
+    private func openInReaderAction(forArtFilename filename: String) -> (() -> Void)? {
+        guard let position = ArtCapturePosition(filename: filename),
+              let chapter = chapter(for: position) else { return nil }
+        return {
+            book.currentChapterIndex = chapter.sortOrder
+            chapter.lastReadPage = min(position.page, max(0, chapter.totalPages - 1))
+            chapter.lastReadOffset = position.pdfOffset(legacyArtworkOffset: estimatedOpeningArtworkOffset)
+            try? modelContext.save()
+            openReaderAfterArtViewer = true
+        }
+    }
+
+    private func chapter(for position: ArtCapturePosition) -> Chapter? {
+        let matches = book.sortedChapters.filter {
+            $0.extractedNumber.flatMap { Int($0) } == position.chapterNumber
+        }
+        if let isEnglish = position.isEnglish {
+            return matches.first { $0.isEnglish == isEnglish }
+        }
+        // Legacy captures don't record the language: prefer the one currently shown.
+        return matches.first { $0.isEnglish == showEnglish } ?? matches.first
+    }
+
+    /// Legacy `y` offsets included the reader's opening artwork page (one viewport minus the
+    /// top safe area, see `PDFPageView`). Every capture after the first had that page.
+    private var estimatedOpeningArtworkOffset: Double {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let height = scene?.screen.bounds.height ?? 852
+        let topInset = scene?.keyWindow?.safeAreaInsets.top ?? 59
+        return Double(height - topInset)
     }
 
     // MARK: - Info Section
@@ -830,15 +875,30 @@ struct ChapterListView: View {
         defer { rootURL.stopAccessingSecurityScopedResource() }
 
         let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
+        let legacyArtworkOffset = estimatedOpeningArtworkOffset
 
         let loaded = await Task.detached(priority: .userInitiated) { () -> [ArtItem] in
             let fm = FileManager.default
             guard fm.fileExists(atPath: artFolder.path) else { return [] }
             let contents = (try? fm.contentsOfDirectory(at: artFolder, includingPropertiesForKeys: nil)) ?? []
             let imageExts: Set<String> = ["jpg", "jpeg", "png", "heic", "webp", "gif"]
+            // Other images (e.g. Photos imports) keep filename order ahead of reader captures,
+            // which follow reading order whatever their language or filename format.
             let imageFiles = contents
                 .filter { imageExts.contains($0.pathExtension.lowercased()) }
-                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                .map { ($0, ArtCapturePosition(filename: $0.lastPathComponent)) }
+                .sorted { lhs, rhs in
+                    switch (lhs.1, rhs.1) {
+                    case let (l?, r?):
+                        if l.isBefore(r, legacyArtworkOffset: legacyArtworkOffset) { return true }
+                        if r.isBefore(l, legacyArtworkOffset: legacyArtworkOffset) { return false }
+                    case (nil, _?): return true
+                    case (_?, nil): return false
+                    case (nil, nil): break
+                    }
+                    return lhs.0.lastPathComponent.localizedStandardCompare(rhs.0.lastPathComponent) == .orderedAscending
+                }
+                .map(\.0)
 
             var items: [ArtItem] = []
             for file in imageFiles {

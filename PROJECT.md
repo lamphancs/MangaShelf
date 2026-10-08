@@ -212,7 +212,7 @@ Protocol over `resolveBookmark` / `fileExists` / `fileSize`. Only conformer is `
 
 ### Art album
 1. Art thumbnails are read from `<series>/Art/` in `ChapterListView.loadArtImages()`.
-2. Add via `PhotosPicker` (saved as timestamped files, extension inferred from magic bytes) or via the reader screenshot button (`ReaderViewModel.captureCurrentPage()` writes `ch###_p####_y########.jpg`).
+2. Add via `PhotosPicker` (saved as timestamped files, extension inferred from magic bytes) or via the reader screenshot button (`ReaderViewModel.captureCurrentPage()` writes `ch###_p####_o########[_en].jpg`, offset ×10 in saved-progress PDF coordinates; older captures use `_y` raw scroll offsets). The viewer's "Open in Reader" menu item parses this via `ArtCapturePosition` and opens the reader at that position.
 3. Tapping opens `ArtViewerOverlay` (swipe nav, drag-to-dismiss, delete, "Show in Files"). "Use as Cover Image" → `CoverCropOverlay`.
 4. `CoverCropOverlay`: draggable/clamped 2:3 box → `Layout.coverSize` (400×600) JPEG on confirm.
 

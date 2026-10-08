@@ -56,7 +56,9 @@ struct PDFPageView: UIViewRepresentable {
         onCaptureReady?({ [weak coordinator = context.coordinator] in
             guard let coordinator, let scrollView = coordinator.scrollView,
                   let image = coordinator.contentView?.captureViewport(scrollView.bounds) else { return nil }
-            return (image, max(0, scrollView.contentOffset.y))
+            // Same PDF coordinates as saved progress, so a capture can be reopened in place.
+            return (image, max(0, scrollView.contentOffset.y
+                                - (coordinator.contentView?.openingContentOffset ?? 0)))
         })
 
         onOffsetReady?({ [weak coordinator = context.coordinator] in

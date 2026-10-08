@@ -420,8 +420,12 @@ final class ReaderViewModel {
             chapterNum = currentChapterIndex + 1
         }
 
-        let offsetKey = Int(scrollOffset * 10)
-        let filename = String(format: "ch%03d_p%04d_y%08d.jpg", chapterNum, currentPage + 1, offsetKey)
+        let filename = ArtCapturePosition(
+            chapterNumber: chapterNum,
+            page: currentPage,
+            offset: Double(scrollOffset),
+            isEnglish: currentChapter?.isEnglish
+        ).filename
         let artFolder = folder.appendingPathComponent("Art")
 
         guard let jpegData = image.jpegData(compressionQuality: 0.9) else { return false }
@@ -459,5 +463,59 @@ final class ReaderViewModel {
     private func cancelOverlayHide() {
         overlayHideTask?.cancel()
         overlayHideTask = nil
+    }
+}
+
+// MARK: - Capture Position
+
+/// Reader position encoded in a screenshot's filename, e.g. `ch012_p0005_o00123450_en.jpg`.
+///
+/// `o` offsets are in the same PDF coordinates as saved reading progress. Legacy `y` offsets
+/// were raw scroll offsets that also included the chapter's opening artwork page.
+nonisolated struct ArtCapturePosition {
+    let chapterNumber: Int
+    /// Zero-based page index.
+    let page: Int
+    let offset: Double
+    /// `nil` for legacy captures, which didn't record the language.
+    let isEnglish: Bool?
+    var isLegacyOffset = false
+
+    var filename: String {
+        let base = String(format: "ch%03d_p%04d_o%08d", chapterNumber, page + 1, Int(offset * 10))
+        return base + (isEnglish == true ? "_en" : "") + ".jpg"
+    }
+
+    init(chapterNumber: Int, page: Int, offset: Double, isEnglish: Bool?) {
+        self.chapterNumber = chapterNumber
+        self.page = page
+        self.offset = offset
+        self.isEnglish = isEnglish
+    }
+
+    /// Offset in saved-progress PDF coordinates, excluding the opening artwork page.
+    /// Legacy offsets subtract `legacyArtworkOffset`, the estimated height of that page.
+    func pdfOffset(legacyArtworkOffset: Double) -> Double {
+        isLegacyOffset ? max(0, offset - legacyArtworkOffset) : offset
+    }
+
+    /// Reading order (chapter, page, position), regardless of language.
+    func isBefore(_ other: ArtCapturePosition, legacyArtworkOffset: Double) -> Bool {
+        if chapterNumber != other.chapterNumber { return chapterNumber < other.chapterNumber }
+        if page != other.page { return page < other.page }
+        return pdfOffset(legacyArtworkOffset: legacyArtworkOffset)
+            < other.pdfOffset(legacyArtworkOffset: legacyArtworkOffset)
+    }
+
+    init?(filename: String) {
+        guard let match = filename.wholeMatch(of: /ch(\d+)_p(\d+)_([oy])(\d+)(_en)?\.[A-Za-z]+/),
+              let chapter = Int(match.1),
+              let page = Int(match.2), page > 0,
+              let offsetKey = Int(match.4) else { return nil }
+        chapterNumber = chapter
+        self.page = page - 1
+        offset = Double(offsetKey) / 10
+        isLegacyOffset = match.3 == "y"
+        isEnglish = isLegacyOffset ? nil : match.5 != nil
     }
 }
