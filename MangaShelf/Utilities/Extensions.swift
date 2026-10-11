@@ -128,9 +128,12 @@ extension Book {
     func chapterProgressLabel() -> String {
         let chapters = sortedChapters
         let currentChapter = chapters[safe: currentChapterIndex]
-        let lastChapter = chapters.last { $0.isEnglish == (currentChapter?.isEnglish ?? false) }
         let currentNum = currentChapter?.extractedNumber ?? "\(currentChapterIndex + 1)"
-        let lastNum = lastChapter?.extractedNumber ?? "\(chapters.count)"
+        // Highest chapter number across every language, so a lagging language still shows the true total.
+        let lastNum = [true, false]
+            .compactMap { isEnglish in chapters.last { $0.isEnglish == isEnglish }?.extractedNumber }
+            .max { (Int($0) ?? 0) < (Int($1) ?? 0) }
+            ?? "\(chapters.count)"
         return "Ch. \(currentNum)/\(lastNum)"
     }
 
