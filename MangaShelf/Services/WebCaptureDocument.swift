@@ -113,6 +113,45 @@ nonisolated struct WebCaptureDocument: Sendable {
         return compact
     }
 
+    /// Crop an existing chapter while keeping its pages and original content streams.
+    /// Pages outside the selection are removed; boundary pages get a smaller media box.
+    /// Rotated pages fall back to the continuous export, which handles rotation.
+    func croppedChapterPDF(crop: CGRect) throws -> Data {
+        let rect = try cropRect(crop)
+        guard let pdf = PDFDocument(data: data), pdf.pageCount == pageCount else {
+            throw WebCaptureError.invalidDocument
+        }
+        guard (0..<pdf.pageCount).allSatisfy({ (pdf.page(at: $0)?.rotation ?? 0) % 360 == 0 }) else {
+            return try exportPDF(crop: crop)
+        }
+        for (index, pageRect) in pageRects.enumerated().reversed() {
+            guard let page = pdf.page(at: index) else { throw WebCaptureError.invalidDocument }
+            let top = max(rect.minY, pageRect.minY)
+            let bottom = min(rect.maxY, pageRect.maxY)
+            let left = max(rect.minX, 0)
+            let right = min(rect.maxX, pageRect.width)
+            guard bottom > top, right > left else {
+                pdf.removePage(at: index)
+                continue
+            }
+            // The canvas runs top-down from each page's top edge; PDF boxes run bottom-up.
+            let box = page.bounds(for: .mediaBox)
+            let cropped = CGRect(x: box.minX + left, y: box.maxY - (bottom - pageRect.minY),
+                                 width: right - left, height: bottom - top)
+            page.setBounds(cropped, for: .mediaBox)
+            page.setBounds(cropped, for: .cropBox)
+        }
+        guard pdf.pageCount > 0,
+              let output = pdf.dataRepresentation(options: [
+                PDFDocumentWriteOption.saveImagesAsJPEGOption: false,
+                PDFDocumentWriteOption.optimizeImagesForScreenOption: false
+              ]),
+              let verified = PDFDocument(data: output), verified.pageCount == pdf.pageCount else {
+            throw WebCaptureError.invalidDocument
+        }
+        return output
+    }
+
     /// Render the continuous document for display only; exported PDF has no bitmap cap.
     func render(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1), preview: Bool = false, pixelWidth: CGFloat? = nil) throws -> UIImage {
         guard let provider = CGDataProvider(data: data as CFData),

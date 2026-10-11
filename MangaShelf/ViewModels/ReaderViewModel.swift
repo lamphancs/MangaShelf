@@ -404,6 +404,62 @@ final class ReaderViewModel {
         }
     }
 
+    // MARK: - Chapter Crop
+
+    /// File backing the open chapter (series) or book (single PDF).
+    var currentPDFURL: URL? {
+        if book.isSeries {
+            guard let folder = folderURL, let chapter = currentChapter else { return nil }
+            return chapter.pdfURL(folderURL: folder)
+        }
+        return accessedURL?.appendingPathComponent(book.filename)
+    }
+
+    var canCropCurrentPDF: Bool {
+        currentPDFURL != nil && pdfDocument != nil && !isLoadingChapter
+    }
+
+    /// Hides the overlay while the crop editor is presented.
+    func beginCropping() {
+        cancelOverlayHide()
+        isOverlayVisible = false
+    }
+
+    /// Replaces the open PDF with its cropped version and reloads it from the top,
+    /// since saved offsets no longer match the cropped content.
+    func replaceCurrentPDF(with data: Data, modelContext: ModelContext) async throws {
+        guard let url = currentPDFURL else { throw WebCaptureError.unavailableFolder }
+        try await Task.detached(priority: .userInitiated) {
+            try data.write(to: url, options: .atomic)
+        }.value
+
+        pdfDocument = nil
+        currentPage = 0
+        restoreProgress = 0
+        isLoadingChapter = true
+        let doc = await Task.detached(priority: .userInitiated) { PDFDocument(url: url) }.value
+        let pageCount = doc?.pageCount ?? 0
+
+        if book.isSeries, let chapter = currentChapter {
+            chapter.totalPages = pageCount
+            chapter.lastReadPage = 0
+            chapter.lastReadOffset = 0
+            book.totalPages = book.sortedChapters.reduce(0) { $0 + $1.totalPages }
+        } else {
+            book.totalPages = pageCount
+            book.lastReadPage = 0
+            book.lastReadOffset = 0
+        }
+        pdfDocument = doc
+        try? modelContext.save()
+        if let folderURL {
+            Task { await BookDataService.shared.save(book: book, seriesFolderURL: folderURL) }
+        }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isLoadingChapter = false
+        }
+    }
+
     // MARK: - Screenshot Capture
 
     func captureCurrentPage() async -> Bool {

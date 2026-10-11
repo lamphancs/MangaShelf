@@ -23,6 +23,12 @@ struct ReaderView: View {
     @State private var bookmarkNote = ""
     @State private var bookmarkColor: BookmarkColor = .red
     @State private var isEditingExistingBookmark = false
+    @State private var cropTarget: CropTarget?
+
+    private struct CropTarget: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
 
     init(book: Book) {
         self.book = book
@@ -150,6 +156,24 @@ struct ReaderView: View {
                     Spacer()
                     Spacer()
                     Spacer()
+                    Button {
+                        guard let url = viewModel.currentPDFURL else { return }
+                        UIImpactFeedbackGenerator.impact(.medium)
+                        viewModel.beginCropping()
+                        cropTarget = CropTarget(url: url)
+                    } label: {
+                        Image(systemName: "crop")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    }
+                    .disabled(!viewModel.canCropCurrentPDF)
+                    .opacity(viewModel.canCropCurrentPDF ? 1 : 0.3)
+                    .accessibilityLabel("Crop PDF")
+
                     if viewModel.hasBothLanguages {
                         Button {
                             UIImpactFeedbackGenerator.impact(.medium)
@@ -279,6 +303,15 @@ struct ReaderView: View {
                 onDelete: isEditingExistingBookmark ? {
                     viewModel.removeCurrentBookmark(modelContext: modelContext)
                 } : nil
+            )
+        }
+        .fullScreenCover(item: $cropTarget) { target in
+            ChapterCropView(
+                pdfURL: target.url,
+                title: viewModel.currentChapter?.displayName ?? book.title,
+                onSave: { data in
+                    try await viewModel.replaceCurrentPDF(with: data, modelContext: modelContext)
+                }
             )
         }
         .statusBar(hidden: !viewModel.isOverlayVisible)
