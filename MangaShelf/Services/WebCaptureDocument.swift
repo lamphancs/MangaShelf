@@ -36,13 +36,19 @@ nonisolated struct WebCaptureDocument: Sendable {
         self.pageRects = rects
     }
 
-    /// Trim five browser viewports from the bottom, retaining at least one on short pages.
-    func defaultCaptureCrop(viewportHeight: CGFloat) -> CGRect {
+    /// Trim browser viewports from the top and bottom, retaining at least one on short pages.
+    func defaultCaptureCrop(viewportHeight: CGFloat,
+                            topTrimPages: Int = CaptureCrop.defaultTopTrimPages,
+                            trimPages: Int = CaptureCrop.defaultTrimPages) -> CGRect {
         guard viewportHeight.isFinite, viewportHeight > 0 else {
             return CGRect(x: 0, y: 0, width: 1, height: 1)
         }
-        let retainedHeight = min(size.height, max(viewportHeight, size.height - 5 * viewportHeight))
-        return CGRect(x: 0, y: 0, width: 1, height: retainedHeight / size.height)
+        let topTrim = CGFloat(max(0, topTrimPages)) * viewportHeight
+        let bottomTrim = CGFloat(max(0, trimPages)) * viewportHeight
+        let retainedHeight = min(size.height, max(viewportHeight, size.height - topTrim - bottomTrim))
+        // When both trims overlap on a short page, the top trim shrinks to keep the retained viewport.
+        let top = min(topTrim, size.height - retainedHeight)
+        return CGRect(x: 0, y: top / size.height, width: 1, height: retainedHeight / size.height)
     }
 
     /// Join source pages into one continuous PDF page, without rasterizing content.

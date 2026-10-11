@@ -78,7 +78,7 @@ struct BookCardView: View {
     private var seriesProgressView: some View {
         let chapterCount = book.sortedChapters.count
         VStack(alignment: .leading, spacing: 4) {
-            BookProgressBar(value: book.readingProgress)
+            BookProgressBar(value: book.progressAgainstLargestLanguage)
 
             Label(
                 book.readingProgress > 0 ? book.chapterProgressLabel() : "\(chapterCount) chapters",

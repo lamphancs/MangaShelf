@@ -7,6 +7,8 @@ struct FullPageCropView: View {
     @Binding var crop: CGRect
     let overview: Bool
     @Environment(ThemeManager.self) private var theme
+    @AppStorage(StorageKey.captureOverviewZoom) private var overviewZoom = CaptureCrop.defaultOverviewZoom
+    @AppStorage(StorageKey.captureDetailZoom) private var detailZoom = CaptureCrop.defaultDetailZoom
     @State private var visibleRect: CGRect = .zero
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var dragOrigin: CGRect?
@@ -24,7 +26,11 @@ struct FullPageCropView: View {
             // Fitting an entire 100,000-point chapter into one screen makes its
             // width almost zero. Keep Overview usable and scroll it when necessary.
             let fittedWidth = available.height * document.size.width / document.size.height
-            let width = overview ? min(available.width, max(100, fittedWidth)) : available.width
+            // Overview scales the fitted width (never wider than the screen);
+            // Detail scales the screen width and scrolls horizontally when zoomed in.
+            let width = overview
+                ? min(available.width, max(100, fittedWidth) * overviewZoom)
+                : available.width * detailZoom
             let size = CGSize(width: width, height: document.size.height * width / document.size.width)
             let canvasTop = max(24, (geometry.size.height - size.height) / 2)
             let viewport = visibleRect.isEmpty ? CGRect(origin: .zero, size: geometry.size) : visibleRect
@@ -39,6 +45,13 @@ struct FullPageCropView: View {
             .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: CGRect.self) { $0.visibleRect } action: { _, rect in
                 visibleRect = rect
+            }
+            .task(id: overview) {
+                // Open on the crop area rather than the page top, keeping the upper
+                // crop handles visible below the viewport edge.
+                let cropTop = canvasTop + crop.minY * size.height
+                let maxOffset = max(0, size.height + 48 - geometry.size.height)
+                scrollPosition.scrollTo(y: min(maxOffset, max(0, cropTop - 80)))
             }
             .overlay(alignment: .bottomTrailing) {
                 VStack(spacing: 8) {

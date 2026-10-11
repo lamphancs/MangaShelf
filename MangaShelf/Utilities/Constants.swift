@@ -22,6 +22,25 @@ enum StorageKey {
     static let accentTheme = "accentTheme"
     static let artworkTransition = "artworkTransition"
     static let libraryViewMode = "libraryViewMode"
+    static let captureCropTrimPages = "captureCropTrimPages"
+    static let captureCropTopTrimPages = "captureCropTopTrimPages"
+    static let captureOverviewZoom = "captureOverviewZoom"
+    static let captureDetailZoom = "captureDetailZoom"
+}
+
+nonisolated enum CaptureCrop {
+    /// Browser viewports trimmed from the bottom of a capture by default.
+    static let defaultTrimPages = 5
+    /// Browser viewports trimmed from the top of a capture by default.
+    static let defaultTopTrimPages = 0
+    static let trimPagesRange = 0...50
+    /// Overview width multiplier over the fit-to-height width (capped at the screen width).
+    static let defaultOverviewZoom = 2.25
+    static let overviewZoomRange = 1.0...10.0
+    /// Detail width multiplier over the screen width.
+    static let defaultDetailZoom = 1.0
+    static let detailZoomRange = 1.0...4.0
+    static let zoomStep = 0.25
 }
 
 /// Raw values are persisted in UserDefaults; keep them stable across releases.

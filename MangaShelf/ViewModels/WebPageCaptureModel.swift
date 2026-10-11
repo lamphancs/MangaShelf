@@ -264,7 +264,12 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                     try WebCaptureDocument(data: data)
                 }.value
                 try Task.checkCancellation()
-                defaultCrop = result.defaultCaptureCrop(viewportHeight: webView.bounds.height)
+                let defaults = UserDefaults.standard
+                let storedTopTrim = defaults.object(forKey: StorageKey.captureCropTopTrimPages) as? Int
+                let storedTrim = defaults.object(forKey: StorageKey.captureCropTrimPages) as? Int
+                defaultCrop = result.defaultCaptureCrop(viewportHeight: webView.bounds.height,
+                                                        topTrimPages: storedTopTrim ?? CaptureCrop.defaultTopTrimPages,
+                                                        trimPages: storedTrim ?? CaptureCrop.defaultTrimPages)
                 nextChapterURL = try? await findNextChapterURL()
                 try Task.checkCancellation()
                 document = result

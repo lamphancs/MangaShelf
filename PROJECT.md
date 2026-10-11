@@ -110,6 +110,10 @@ Supporting enum `BookmarkColor` (11 system colors `.red`…`.pink`); its raw val
 | `accentTheme` | `accentTheme` | Selected `AccentTheme` raw value |
 | `artworkTransition` | `artworkTransition` | Chapter artwork effect: `fade` (default), `continuous`, `parallax`, or `parallaxContinuous`; spatial effects use feathered artwork edges with fully opaque PDF content |
 | `libraryViewMode` | `libraryViewMode` | Grid or list (`LibraryViewMode`, via `@AppStorage`) |
+| `captureCropTopTrimPages` | `captureCropTopTrimPages` | Browser viewports trimmed from the top of a web capture's default crop (default 0, range 0–50; Settings → Web Capture) |
+| `captureCropTrimPages` | `captureCropTrimPages` | Browser viewports trimmed from the bottom of a web capture's default crop (default 5, range 0–50; Settings → Web Capture) |
+| `captureOverviewZoom` | `captureOverviewZoom` | Crop-preview Overview width multiplier over the fit-to-height width, capped at screen width (default 2.25, range 1–10, step 0.25) |
+| `captureDetailZoom` | `captureDetailZoom` | Crop-preview Detail width multiplier over the screen width; above 1× it scrolls horizontally (default 1, range 1–4, step 0.25) |
 
 `Constants.swift` also defines `enum Layout` with `coverSize = 400×600` (shared by `ThumbnailService` and `CoverCropOverlay`).
 

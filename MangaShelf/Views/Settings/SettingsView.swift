@@ -16,6 +16,10 @@ struct SettingsView: View {
     @Environment(ThemeManager.self) private var theme
 
     @AppStorage(StorageKey.artworkTransition) private var artworkTransition: ArtworkTransition = .fade
+    @AppStorage(StorageKey.captureCropTopTrimPages) private var captureCropTopTrimPages = CaptureCrop.defaultTopTrimPages
+    @AppStorage(StorageKey.captureCropTrimPages) private var captureCropTrimPages = CaptureCrop.defaultTrimPages
+    @AppStorage(StorageKey.captureOverviewZoom) private var captureOverviewZoom = CaptureCrop.defaultOverviewZoom
+    @AppStorage(StorageKey.captureDetailZoom) private var captureDetailZoom = CaptureCrop.defaultDetailZoom
 
     @State private var rootFolderName: String?
     @State private var isScanning = false
@@ -40,6 +44,7 @@ struct SettingsView: View {
                     themeSection
                     accentSection
                     readerSection
+                    captureSection
                     if isSecretMode {
                         secretLibrarySection
                     } else {
@@ -210,6 +215,107 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondaryText)
                 .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: - Capture Section
+
+    private var captureSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WEB CAPTURE")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                cropTrimRow(title: "Trim Top", symbol: "arrow.down.to.line",
+                            accessibilityLabel: "Pages trimmed from top", value: $captureCropTopTrimPages)
+                Divider().background(Color.white.opacity(0.06))
+                cropTrimRow(title: "Trim Bottom", symbol: "arrow.up.to.line",
+                            accessibilityLabel: "Pages trimmed from bottom", value: $captureCropTrimPages)
+            }
+            .font(.subheadline)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text("Number of screen-height pages removed from the top and bottom of a captured chapter by default. At least one page is always kept.")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                zoomRow(title: "Overview Zoom", symbol: "arrow.up.left.and.arrow.down.right",
+                        accessibilityLabel: "Overview zoom", value: $captureOverviewZoom,
+                        range: CaptureCrop.overviewZoomRange)
+                Divider().background(Color.white.opacity(0.06))
+                zoomRow(title: "Detail Zoom", symbol: "plus.magnifyingglass",
+                        accessibilityLabel: "Detail zoom", value: $captureDetailZoom,
+                        range: CaptureCrop.detailZoomRange)
+            }
+            .font(.subheadline)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.top, 6)
+
+            Text("PDF size in the crop preview. Overview never grows wider than the screen; Detail scrolls sideways above 1×.")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private func zoomRow(title: String, symbol: String, accessibilityLabel: String,
+                         value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(theme.accent)
+                .frame(width: 24)
+            Text(title)
+                .foregroundStyle(.white)
+            Spacer(minLength: 0)
+            TextField("Zoom", value: value, format: .number.precision(.fractionLength(0...2)))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(.white)
+                .frame(width: 52)
+                .accessibilityLabel(accessibilityLabel)
+            Text("×")
+                .foregroundColor(.secondaryText)
+            Stepper(accessibilityLabel, value: value, in: range, step: CaptureCrop.zoomStep)
+                .labelsHidden()
+        }
+        .padding(14)
+        .onChange(of: value.wrappedValue) { _, newValue in
+            // Typed values bypass the stepper's range, so clamp them here.
+            let clamped = newValue.isFinite ? min(range.upperBound, max(range.lowerBound, newValue)) : range.lowerBound
+            if clamped != newValue { value.wrappedValue = clamped }
+        }
+    }
+
+    private func cropTrimRow(title: String, symbol: String, accessibilityLabel: String,
+                             value: Binding<Int>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(theme.accent)
+                .frame(width: 24)
+            Text(title)
+                .foregroundStyle(.white)
+            Spacer(minLength: 0)
+            TextField("Pages", value: value, format: .number)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(.white)
+                .frame(width: 48)
+                .accessibilityLabel(accessibilityLabel)
+            Stepper(accessibilityLabel, value: value, in: CaptureCrop.trimPagesRange)
+                .labelsHidden()
+        }
+        .padding(14)
+        .onChange(of: value.wrappedValue) { _, newValue in
+            // Typed values bypass the stepper's range, so clamp them here.
+            let range = CaptureCrop.trimPagesRange
+            let clamped = min(range.upperBound, max(range.lowerBound, newValue))
+            if clamped != newValue { value.wrappedValue = clamped }
         }
     }
 

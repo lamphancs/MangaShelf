@@ -133,6 +133,19 @@ extension Book {
         let lastNum = lastChapter?.extractedNumber ?? "\(chapters.count)"
         return "Ch. \(currentNum)/\(lastNum)"
     }
+
+    /// Position of the current chapter within its language, measured against the language
+    /// with the most chapters — so progress is comparable when one language lags behind.
+    var progressAgainstLargestLanguage: Double {
+        let chapters = sortedChapters
+        guard let current = chapters[safe: currentChapterIndex] else { return 0.0 }
+        let englishCount = chapters.filter(\.isEnglish).count
+        let maxCount = max(chapters.count - englishCount, englishCount)
+        guard maxCount > 0 else { return 0.0 }
+        let languageChapters = chapters.filter { $0.isEnglish == current.isEnglish }
+        let index = languageChapters.firstIndex { $0.id == current.id } ?? 0
+        return min(Double(index) / Double(maxCount), 1.0)
+    }
 }
 
 // MARK: - Haptic Feedback
