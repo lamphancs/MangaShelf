@@ -12,7 +12,7 @@ import SwiftUI
 /// showing a spinner while loading and a placeholder glyph when there is no cover.
 ///
 /// Layout parameters mirror the two call sites exactly:
-/// - grid card: `width == nil` (fills available width), `height == 230`, no corner clip
+/// - grid card: `width == nil` (fills available width), `aspectRatio == 2:3`, no corner clip
 /// - list row: `width == 60`, `height == 80`, `cornerRadius == 8`
 struct BookCoverThumbnail: View {
 
@@ -23,7 +23,9 @@ struct BookCoverThumbnail: View {
     let displaySize: CGSize
     let placeholderFont: Font
     var width: CGFloat? = nil
-    let height: CGFloat
+    var height: CGFloat? = nil
+    /// Width / height of the cover frame, used when `width` is nil and no fixed `height` is given.
+    var aspectRatio: CGFloat? = nil
     var cornerRadius: CGFloat? = nil
 
     @State private var thumbnailImage: UIImage?
@@ -45,11 +47,17 @@ struct BookCoverThumbnail: View {
             Rectangle()
                 .fill(theme.cardBackground)
                 .frame(width: width, height: height)
-        } else {
+        } else if let height {
             Rectangle()
                 .fill(theme.cardBackground)
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
+        } else {
+            // Fill the available width and derive the height from the cover ratio.
+            Rectangle()
+                .fill(theme.cardBackground)
+                .aspectRatio(aspectRatio ?? Layout.coverSize.width / Layout.coverSize.height, contentMode: .fit)
+                .frame(maxWidth: .infinity)
         }
     }
 

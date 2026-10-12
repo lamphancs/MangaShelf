@@ -22,8 +22,7 @@ struct BookCardView: View {
                 book: book,
                 displaySize: Self.displaySize,
                 placeholderFont: .system(size: 40),
-                width: nil,
-                height: 230
+                aspectRatio: Self.coverAspectRatio
             )
 
             VStack(alignment: .leading, spacing: 8) {
@@ -106,7 +105,9 @@ struct BookCardView: View {
         }
     }
 
-    private static let displaySize = CGSize(width: 200, height: 230)
+    /// Same 2:3 ratio as the cover crop, so the grid shows the cover uncropped.
+    private static let coverAspectRatio: CGFloat = 2.0 / 3.0
+    private static let displaySize = CGSize(width: 200, height: 300)
 }
 
 #Preview {
