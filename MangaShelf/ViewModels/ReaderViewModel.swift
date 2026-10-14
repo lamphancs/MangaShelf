@@ -42,8 +42,8 @@ final class ReaderViewModel {
 
     /// Index (in `otherLanguageChapters`) of the chapter with the same number as the current one.
     private var counterpartChapterIndex: Int? {
-        guard let number = currentChapter?.extractedNumber.flatMap({ Int($0) }) else { return nil }
-        return otherLanguageChapters.firstIndex { $0.extractedNumber.flatMap { Int($0) } == number }
+        guard let number = currentChapter?.chapterNumber else { return nil }
+        return otherLanguageChapters.firstIndex { $0.chapterNumber == number }
     }
 
     var canToggleLanguage: Bool {
@@ -467,14 +467,7 @@ final class ReaderViewModel {
               let folder = folderURL,
               let (image, scrollOffset) = captureViewport?() else { return false }
 
-        let chapterNum: Int
-        if let chapter = currentChapter,
-           let numStr = chapter.extractedNumber,
-           let n = Int(numStr) {
-            chapterNum = n
-        } else {
-            chapterNum = currentChapterIndex + 1
-        }
+        let chapterNum = currentChapter?.chapterNumber ?? Double(currentChapterIndex + 1)
 
         let filename = ArtCapturePosition(
             chapterNumber: chapterNum,
@@ -529,7 +522,8 @@ final class ReaderViewModel {
 /// `o` offsets are in the same PDF coordinates as saved reading progress. Legacy `y` offsets
 /// were raw scroll offsets that also included the chapter's opening artwork page.
 nonisolated struct ArtCapturePosition {
-    let chapterNumber: Int
+    /// Decimal chapters (e.g. 12.5) are written as `ch012.5`.
+    let chapterNumber: Double
     /// Zero-based page index.
     let page: Int
     let offset: Double
@@ -538,11 +532,16 @@ nonisolated struct ArtCapturePosition {
     var isLegacyOffset = false
 
     var filename: String {
-        let base = String(format: "ch%03d_p%04d_o%08d", chapterNumber, page + 1, Int(offset * 10))
+        var chapterKey = String(format: "%03d", Int(chapterNumber))
+        if chapterNumber != chapterNumber.rounded(.down),
+           let decimals = String(chapterNumber).split(separator: ".").last {
+            chapterKey += "." + decimals
+        }
+        let base = "ch" + chapterKey + String(format: "_p%04d_o%08d", page + 1, Int(offset * 10))
         return base + (isEnglish == true ? "_en" : "") + ".jpg"
     }
 
-    init(chapterNumber: Int, page: Int, offset: Double, isEnglish: Bool?) {
+    init(chapterNumber: Double, page: Int, offset: Double, isEnglish: Bool?) {
         self.chapterNumber = chapterNumber
         self.page = page
         self.offset = offset
@@ -564,8 +563,8 @@ nonisolated struct ArtCapturePosition {
     }
 
     init?(filename: String) {
-        guard let match = filename.wholeMatch(of: /ch(\d+)_p(\d+)_([oy])(\d+)(_en)?\.[A-Za-z]+/),
-              let chapter = Int(match.1),
+        guard let match = filename.wholeMatch(of: /ch(\d+(?:\.\d+)?)_p(\d+)_([oy])(\d+)(_en)?\.[A-Za-z]+/),
+              let chapter = Double(match.1),
               let page = Int(match.2), page > 0,
               let offsetKey = Int(match.4) else { return nil }
         chapterNumber = chapter

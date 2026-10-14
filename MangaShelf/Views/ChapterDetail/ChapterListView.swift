@@ -135,6 +135,9 @@ struct ChapterListView: View {
                 },
                 openInReaderAction: { filename in
                     openInReaderAction(forArtFilename: filename)
+                },
+                loadFullImage: { id in
+                    id == "__cover__" ? nil : await loadFullArtImage(filename: id)
                 }
             )
         }
@@ -295,9 +298,7 @@ struct ChapterListView: View {
     }
 
     private func chapter(for position: ArtCapturePosition) -> Chapter? {
-        let matches = book.sortedChapters.filter {
-            $0.extractedNumber.flatMap { Int($0) } == position.chapterNumber
-        }
+        let matches = book.sortedChapters.filter { $0.chapterNumber == position.chapterNumber }
         if let isEnglish = position.isEnglish {
             return matches.first { $0.isEnglish == isEnglish }
         }
@@ -876,6 +877,8 @@ struct ChapterListView: View {
 
         let artFolder = rootURL.appendingPathComponent(folderName).appendingPathComponent("Art")
         let legacyArtworkOffset = estimatedOpeningArtworkOffset
+        // Reuse already-decoded previews; this reloads after every viewer/reader dismissal.
+        let existing = Dictionary(artImages.map { ($0.id, $0.image) }, uniquingKeysWith: { first, _ in first })
 
         let loaded = await Task.detached(priority: .userInitiated) { () -> [ArtItem] in
             let fm = FileManager.default
@@ -902,15 +905,33 @@ struct ChapterListView: View {
 
             var items: [ArtItem] = []
             for file in imageFiles {
-                if let data = try? Data(contentsOf: file),
-                   let image = UIImage(data: data) {
-                    items.append(ArtItem(id: file.lastPathComponent, image: image))
+                let id = file.lastPathComponent
+                if let image = existing[id] ?? ArtItem.downsampledImage(at: file) {
+                    items.append(ArtItem(id: id, image: image))
                 }
             }
             return items
         }.value
 
         artImages = loaded
+    }
+
+    /// Full-resolution art for the viewer, which holds only the image currently shown.
+    private func loadFullArtImage(filename: String) async -> UIImage? {
+        guard book.isSeries, let folderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData) else { return nil }
+        let fileURL = rootURL.appendingPathComponent(folderName)
+            .appendingPathComponent("Art")
+            .appendingPathComponent(filename)
+
+        return await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            guard rootURL.startAccessingSecurityScopedResource() else { return nil }
+            defer { rootURL.stopAccessingSecurityScopedResource() }
+            guard let data = try? Data(contentsOf: fileURL) else { return nil }
+            // Decode now, off the main thread, rather than lazily on first draw.
+            return UIImage(data: data)?.preparingForDisplay()
+        }.value
     }
 
     private func saveArtImage(_ data: Data) async {

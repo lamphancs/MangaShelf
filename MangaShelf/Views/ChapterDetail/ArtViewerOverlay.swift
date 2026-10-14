@@ -4,11 +4,32 @@
 //
 
 import SwiftUI
+import ImageIO
 
 struct ArtItem: Identifiable {
     let id: String
+    /// Downsampled preview for carousels and thumbnails; the viewer loads full resolution on demand.
     let image: UIImage
     var isCover: Bool = false
+
+    /// Longest side of `image`. Reader captures are full-screen at native scale (~14 MB decoded
+    /// each), so keeping every one at full resolution quickly exhausts memory.
+    nonisolated static let previewMaxPixelSize: CGFloat = 1400
+
+    /// Decodes a downsampled image straight from disk without decoding the full bitmap first.
+    nonisolated static func downsampledImage(at url: URL, maxPixelSize: CGFloat = previewMaxPixelSize) -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
 }
 
 private struct ClearFullScreenBackground: UIViewRepresentable {
@@ -35,6 +56,8 @@ struct ArtViewerOverlay: View {
     @State private var showCropMode = false
     @State private var isDismissing = false
     @State private var appeared = false
+    /// Full-resolution image for the current item only, so at most one is held in memory.
+    @State private var fullImage: (id: String, image: UIImage)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(ThemeManager.self) private var theme
@@ -45,18 +68,32 @@ struct ArtViewerOverlay: View {
     /// Returns an action that opens the reader where the art (by filename) was captured,
     /// or `nil` when its position is unknown. The viewer dismisses itself after running it.
     var openInReaderAction: ((String) -> (() -> Void)?)?
+    /// Loads the full-resolution image for an art item (by id), or `nil` to keep the preview.
+    var loadFullImage: ((String) async -> UIImage?)?
 
     init(artImages: [ArtItem], initialIndex: Int,
          onDeleteFile: @escaping (String) async -> Void,
          onSetCover: @escaping (UIImage) async -> Void,
          onOpenInFolder: (() -> Void)? = nil,
-         openInReaderAction: ((String) -> (() -> Void)?)? = nil) {
+         openInReaderAction: ((String) -> (() -> Void)?)? = nil,
+         loadFullImage: ((String) async -> UIImage?)? = nil) {
         _artImages = State(initialValue: artImages)
         _currentIndex = State(initialValue: min(initialIndex, max(artImages.count - 1, 0)))
         self.onDeleteFile = onDeleteFile
         self.onSetCover = onSetCover
         self.onOpenInFolder = onOpenInFolder
         self.openInReaderAction = openInReaderAction
+        self.loadFullImage = loadFullImage
+    }
+
+    private var currentItemID: String? {
+        artImages.indices.contains(currentIndex) ? artImages[currentIndex].id : nil
+    }
+
+    private func displayImage(at index: Int) -> UIImage {
+        let item = artImages[index]
+        if let fullImage, fullImage.id == item.id { return fullImage.image }
+        return item.image
     }
 
     var body: some View {
@@ -68,7 +105,7 @@ struct ArtViewerOverlay: View {
                 .ignoresSafeArea()
 
             if !artImages.isEmpty {
-                Image(uiImage: artImages[currentIndex].image)
+                Image(uiImage: displayImage(at: currentIndex))
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -222,7 +259,7 @@ struct ArtViewerOverlay: View {
 
             if showCropMode, currentIndex >= 0, currentIndex < artImages.count {
                 CoverCropOverlay(
-                    image: artImages[currentIndex].image,
+                    image: displayImage(at: currentIndex),
                     onConfirm: { croppedImage in
                         withAnimation(.easeInOut(duration: 0.25)) {
                             showCropMode = false
@@ -241,6 +278,13 @@ struct ArtViewerOverlay: View {
         .background(ClearFullScreenBackground())
         .preferredColorScheme(.dark)
         .statusBarHidden(!controlsVisible)
+        .task(id: currentItemID) {
+            guard let id = currentItemID, let loadFullImage else { return }
+            let image = await loadFullImage(id)
+            guard !Task.isCancelled, id == currentItemID else { return }
+            // Replacing the previous full image releases it.
+            fullImage = image.map { (id, $0) }
+        }
     }
 
     private var thumbnailStrip: some View {

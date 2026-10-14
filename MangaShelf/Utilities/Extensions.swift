@@ -49,9 +49,13 @@ extension String {
 // MARK: - Chapter Extensions
 
 extension Chapter {
+    /// Last number in the name, keeping decimals ("12.5" for "Chapter 12.5").
     var extractedNumber: String? {
-        let numbers = displayName.components(separatedBy: .decimalDigits.inverted).filter { !$0.isEmpty }
-        return numbers.last
+        displayName.matches(of: /\d+(?:\.\d+)?/).last.map { String($0.output) }
+    }
+
+    var chapterNumber: Double? {
+        extractedNumber.flatMap { Double($0) }
     }
 }
 
@@ -132,7 +136,7 @@ extension Book {
         // Highest chapter number across every language, so a lagging language still shows the true total.
         let lastNum = [true, false]
             .compactMap { isEnglish in chapters.last { $0.isEnglish == isEnglish }?.extractedNumber }
-            .max { (Int($0) ?? 0) < (Int($1) ?? 0) }
+            .max { (Double($0) ?? 0) < (Double($1) ?? 0) }
             ?? "\(chapters.count)"
         return "Ch. \(currentNum)/\(lastNum)"
     }
