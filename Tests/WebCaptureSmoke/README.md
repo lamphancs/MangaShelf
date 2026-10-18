@@ -65,3 +65,5 @@ image data and text were retained. All 13 boundary crops at 3x matched the reade
 seam-free rendering pixel-for-pixel. The unmodified and final PDFs were not committed.
 
 Background-overpaint regression (2026-10-18): the reader smoke suite includes a later image background overpainting the previous image by 0.333 point. Export must remove it under default PDFKit smoothing at 1x/2x/3x/4x while preserving an embedded black comic border pixel-for-pixel. The Chapter 33 reproduction is a one-page 430-point-wide PDF; repaired output retains its text and original image resources. At 1x only the erroneous scanline changes. This is an export repair; pre-existing source PDFs are not silently rewritten by the reader.
+
+The reader suite also runs the background-overpaint fixture with a source-page clip cutting through the following image, reproducing the Chapter 30/31 missed detection. Both variants must clear the seam at 1x–4x while preserving the original black border. Private PDF checks operate in memory and retain no corrected PDF files.

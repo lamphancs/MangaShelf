@@ -124,7 +124,10 @@ nonisolated enum PDFSeamRepair {
         private var clipsPath = false
         private var regions: [CGRect] = []
         private var invalid = false
-        private var lastFill: CGRect?
+        // Keep the rectangle's original geometry separately from its visible clip.
+        // WebKit splits tall images/backgrounds across source PDF pages; clipping
+        // their dimensions before matching makes valid backgrounds look unrelated.
+        private var lastFill: (rect: CGRect, clip: CGRect)?
         private var previousImage: (object: CGPDFObjectRef, transform: CGAffineTransform, region: CGRect)?
         fileprivate var repairs: [PDFLosslessWriter.ImagePatch] = []
 
@@ -170,7 +173,8 @@ nonisolated enum PDFSeamRepair {
             for operation in ["f", "F", "f*"] {
                 CGPDFOperatorTableSetCallback(table, operation, { _, info in
                     let v = ImageJoins.get(info)
-                    v.lastFill = !v.complexPath && !v.clipsPath ? v.path?.intersection(v.state.clip) : nil
+                    v.lastFill = !v.complexPath && !v.clipsPath
+                        ? v.path.map { (rect: $0, clip: v.state.clip) } : nil
                     if v.clipsPath {
                         v.state.clip = !v.complexPath && v.path != nil
                             ? v.state.clip.intersection(v.path!) : .null
@@ -216,7 +220,7 @@ nonisolated enum PDFSeamRepair {
         }
 
         private func image(_ scanner: CGPDFScannerRef) {
-            let fill = lastFill
+            let background = lastFill
             lastFill = nil
             let previous = previousImage
             previousImage = nil
@@ -237,13 +241,14 @@ nonisolated enum PDFSeamRepair {
             guard !region.isNull, region.width >= bounds.width - 0.01, region.height > 0 else { return }
             // Only WebKit's full-image background rectangle, immediately followed
             // by a touching image, qualifies. Real rules and embedded borders do not.
-            if let fill, let previous,
+            if let fill = background?.rect, let background, let previous,
                abs(fill.minX - image.minX) < 0.01, abs(fill.width - image.width) < 0.01,
                abs(fill.minY - image.minY) <= 0.5,
                fill.maxY > image.maxY, fill.maxY - image.maxY <= 0.5,
                abs(previous.region.minY - image.maxY) < 0.01 {
                 let strip = CGRect(x: image.minX, y: image.maxY, width: image.width,
-                                   height: fill.maxY - image.maxY + 0.5).intersection(previous.region)
+                                   height: fill.maxY - image.maxY + 0.5)
+                    .intersection(previous.region).intersection(background.clip)
                 if !strip.isNull && strip.height > 0 {
                     repairs.append(.init(image: previous.object, transform: previous.transform, clip: strip))
                 }
