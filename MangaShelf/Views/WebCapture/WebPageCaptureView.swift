@@ -79,7 +79,7 @@ struct WebPageCaptureView: View {
                     cropControls
                 } else {
                     if model.isVerificationRequired {
-                        Text("Complete the website verification above. If it keeps repeating, open this page in your browser and capture it there.")
+                        Text("Complete the website verification above and keep this page open while it finishes. Capture becomes available when the website loads.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal)

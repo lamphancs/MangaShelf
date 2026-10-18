@@ -85,9 +85,14 @@ struct CaptureSmokeView: View {
             return
         }
         if ProcessInfo.processInfo.environment["CAPTURE_TEST_ONLY"] == "live" {
-            try? await Task.sleep(for: .seconds(5))
-            guard let title = model.webView.title, !title.localizedCaseInsensitiveContains("just a moment") else {
-                write("FAIL: Live site returned an access challenge; no chapter PDF measurement available")
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .seconds(1))
+                if !model.isVerificationRequired && model.canCapture { break }
+            }
+            guard model.canCapture, !model.isVerificationRequired,
+                  let title = model.webView.title, !title.localizedCaseInsensitiveContains("just a moment") else {
+                let diagnostic = try? await model.webView.evaluateJavaScript("JSON.stringify({url:location.href, userAgent:navigator.userAgent, text:document.body.innerText, frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,title:f.title}))})")
+                write("FAIL: Live site returned an access challenge; no chapter PDF measurement available\n\(diagnostic ?? "No DOM diagnostics")")
                 return
             }
             model.capture(loadEntirePage: true)
@@ -165,6 +170,8 @@ struct CaptureSmokeView: View {
             model.goToNextChapter(automaticallyCapture: true)
             try await waitForPage(query: nil)
             browsingChecks.append("\(model.isVerificationRequired && !model.canCapture ? "PASS" : "FAIL"): Cloudflare response blocks capture but keeps verification page available")
+            let frameReady = try await model.webView.evaluateJavaScript("['blob-ready', 'data-ready'].every(kind => window.verificationFrames.includes(kind))") as? Bool
+            browsingChecks.append("\(frameReady == true ? "PASS" : "FAIL"): Verification can initialize blob and data iframes")
             model.capture(loadEntirePage: true)
             browsingChecks.append("\(!model.isCapturing && model.document == nil ? "PASS" : "FAIL"): Verification page cannot be exported as chapter")
             model.load(chapterURL)
@@ -173,6 +180,10 @@ struct CaptureSmokeView: View {
             let normalSession = WebPageCaptureModel(isPrivate: false)
             browsingChecks.append("\(normalSession.webView.configuration.websiteDataStore.isPersistent && !model.webView.configuration.websiteDataStore.isPersistent ? "PASS" : "FAIL"): Normal sessions persist while private sessions remain ephemeral")
             normalSession.close()
+            if ProcessInfo.processInfo.environment["CAPTURE_TEST_ONLY"] == "browser" {
+                write(browsingChecks.joined(separator: "\n"))
+                return
+            }
             model.capture(loadEntirePage: true)
         } catch { write("FAIL: Browser navigation: \(error)") }
     }

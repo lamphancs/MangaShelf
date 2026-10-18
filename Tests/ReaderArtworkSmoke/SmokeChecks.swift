@@ -377,6 +377,50 @@ func runReaderArtworkChecks() async throws -> String {
     try check(rgb(preview, x: 450, y: 299).prefix(3).allSatisfy { $0 > 245 },
               "Capture preview uses the same seam-free rasterization as the reader")
     clippedContent.clearContent()
+    // A later image's background overpaints 1/3 point of the preceding image.
+    // Disabling antialiasing cannot repair this: original image pixels are needed.
+    let overpaint = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 1200)).pdfData { context in
+        context.beginPage()
+        let upper = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 600)).image { imageContext in
+            UIColor.white.setFill()
+            imageContext.fill(CGRect(x: 0, y: 0, width: 300, height: 600))
+            UIColor.black.setFill()
+            imageContext.fill(CGRect(x: 0, y: 590, width: 300, height: 2))
+        }
+        let cg = context.cgContext
+        cg.translateBy(x: 0, y: 1200)
+        cg.scaleBy(x: 1, y: -1)
+        cg.draw(upper.cgImage!, in: CGRect(x: 0, y: 600, width: 300, height: 600))
+        cg.setFillColor(UIColor.black.cgColor)
+        cg.fill(CGRect(x: 0, y: 0, width: 300, height: 600.333))
+        cg.draw(image(.white, size: CGSize(width: 300, height: 600)).cgImage!,
+                in: CGRect(x: 0, y: 0, width: 300, height: 600))
+    }
+    let overpaintResult = try PDFSeamRepair.export(overpaint)
+    try check(overpaintResult.repaired, "Background overpaint is repaired in exported content")
+    let fixedOverpaint = PDFDocument(data: overpaintResult.data)!
+    for scale: CGFloat in [1, 2, 3, 4] {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        func external(_ pdf: PDFDocument) -> UIImage {
+            UIGraphicsImageRenderer(size: CGSize(width: 300, height: 40), format: format).image { ctx in
+            UIColor.white.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 300, height: 40))
+            ctx.cgContext.translateBy(x: 0, y: 620)
+            ctx.cgContext.scaleBy(x: 1, y: -1)
+            pdf.page(at: 0)!.draw(with: .mediaBox, to: ctx.cgContext)
+            }
+        }
+        let rendered = external(fixedOverpaint)
+        let original = external(PDFDocument(data: overpaint)!)
+        for delta: CGFloat in [-0.5, 0, 0.5] {
+            try check(rgb(rendered, x: 150, y: 20 + delta).prefix(3).allSatisfy { $0 > 245 },
+                      "Export removes background overpaint with default smoothing at \(scale)x")
+        }
+        let actualBorder = rgb(rendered, x: 150, y: 11)
+        try check(actualBorder == rgb(original, x: 150, y: 11)
+                  && actualBorder.prefix(3).allSatisfy { $0 < 128 },
+                  "Original image's black border is pixel-identical after repair at \(scale)x")
+    }
     let budgeted = try PDFSeamRepair.export(seamData)
     try check(budgeted.data.count <= seamData.count + PDFSeamRepair.repairSizeAllowance,
               "Seam repair grows a PDF by at most the size allowance")

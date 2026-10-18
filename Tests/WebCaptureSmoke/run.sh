@@ -36,7 +36,9 @@ for _ in $(seq 1 300); do
         cat "$work_dir/result.txt"
         echo
         if grep -q 'FAIL' "$work_dir/result.txt"; then exit 1; fi
-        cp "$container_path/Documents/full.pdf" "$container_path/Documents/bottom.pdf" "$work_dir/"
+        if [[ "${CAPTURE_TEST_ONLY:-}" != "browser" ]]; then
+            cp "$container_path/Documents/full.pdf" "$container_path/Documents/bottom.pdf" "$work_dir/"
+        fi
         exit 0
     fi
     sleep 1

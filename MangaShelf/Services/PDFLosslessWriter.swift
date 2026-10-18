@@ -13,7 +13,13 @@ nonisolated enum PDFLosslessWriter {
         let rgb: Data
     }
 
-    static func compact(_ data: Data, patches: [Patch] = []) throws -> Data {
+    struct ImagePatch {
+        let image: CGPDFObjectRef
+        let transform: CGAffineTransform
+        let clip: CGRect
+    }
+
+    static func compact(_ data: Data, patches: [Patch] = [], repairBackgrounds: Bool = false) throws -> Data {
         guard let provider = CGDataProvider(data: data as CFData),
               let document = CGPDFDocument(provider), !document.isEncrypted,
               let catalog = document.catalog else { throw Failure.unsupported }
@@ -21,9 +27,12 @@ nonisolated enum PDFLosslessWriter {
         defer { writer.clear() }
         let root = try writer.dictionary(catalog)
         let info = try document.info.map { try writer.dictionary($0) }
-        if !patches.isEmpty {
+        if !patches.isEmpty || repairBackgrounds {
             guard document.numberOfPages == 1, let page = document.page(at: 1) else { throw Failure.unsupported }
-            try writer.add(patches: patches, to: page)
+            let images = repairBackgrounds ? PDFSeamRepair.backgroundPatches(in: page) : []
+            if !patches.isEmpty || !images.isEmpty {
+                try writer.add(patches: patches, images: images, to: page)
+            }
         }
         return try withExtendedLifetime(document) { try writer.finish(root: root, info: info) }
     }
@@ -45,7 +54,7 @@ nonisolated enum PDFLosslessWriter {
             return "\(id) 0 R"
         }
 
-        func add(patches: [Patch], to page: CGPDFPage) throws {
+        func add(patches: [Patch], images: [ImagePatch], to page: CGPDFPage) throws {
             guard let pageDictionary = page.dictionary else { throw Failure.unsupported }
             var resources: CGPDFDictionaryRef?
             var ancestor = pageDictionary
@@ -78,6 +87,16 @@ nonisolated enum PDFLosslessWriter {
                 additions += "/\(key) \(image)\n"
                 commands.append(contentsOf: ("q \(number(patch.rect.width)) 0 0 \(number(patch.rect.height)) " +
                     "\(number(patch.rect.minX)) \(number(patch.rect.minY)) cm /\(key) Do Q\n").utf8)
+            }
+            for (index, patch) in images.enumerated() {
+                var key = "MangaShelfImageEdge\(index)"
+                while names.contains(Data(key.utf8)) { key += "_" }
+                names.insert(Data(key.utf8))
+                additions += "/\(key) \(try object(patch.image))\n"
+                let r = patch.clip
+                let t = patch.transform
+                commands.append(contentsOf: ("q \(number(r.minX)) \(number(r.minY)) \(number(r.width)) \(number(r.height)) re W n " +
+                    "\(number(t.a)) \(number(t.b)) \(number(t.c)) \(number(t.d)) \(number(t.tx)) \(number(t.ty)) cm /\(key) Do Q\n").utf8)
             }
             commands.append(contentsOf: "Q\n".utf8)
             let imageEntries = additions

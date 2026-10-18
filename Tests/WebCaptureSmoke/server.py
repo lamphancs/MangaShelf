@@ -9,7 +9,23 @@ import time
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/challenge':
-            data = b'<html><head><title>Verification fixture</title></head><body>Complete verification</body></html>'
+            data = b'''<html><head><title>Verification fixture</title></head><body>Complete verification
+<script>
+window.verificationFrames = [];
+window.addEventListener('message', event => {
+    if (event.data === 'blob-ready' || event.data === 'data-ready') {
+        window.verificationFrames.push(event.data);
+    }
+});
+for (const kind of ['blob', 'data']) {
+    const html = '<script>parent.postMessage("' + kind + '-ready", "*")<' + '/script>';
+    const frame = document.createElement('iframe');
+    frame.src = kind === 'blob'
+        ? URL.createObjectURL(new Blob([html], {type: 'text/html'}))
+        : 'data:text/html,' + encodeURIComponent(html);
+    document.body.append(frame);
+}
+</script></body></html>'''
             self.send_response(403)
             self.send_header('Content-Type', 'text/html')
             self.send_header('cf-mitigated', 'challenge')

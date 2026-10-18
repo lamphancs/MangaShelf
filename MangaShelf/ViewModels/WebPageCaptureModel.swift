@@ -144,6 +144,13 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
             return
         }
         let scheme = navigationAction.request.url?.scheme?.lowercased()
+        // Verification widgets and other embedded content create local frames before
+        // loading their scripts. These are not external app links or browser popups.
+        if navigationAction.targetFrame?.isMainFrame == false,
+           ["about", "blob", "data"].contains(scheme ?? "") {
+            decisionHandler(.allow)
+            return
+        }
         if navigationAction.targetFrame?.isMainFrame == true, scheme == "http" || scheme == "https" {
             requestedURL = navigationAction.request.url
         }

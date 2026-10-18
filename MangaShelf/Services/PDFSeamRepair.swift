@@ -27,23 +27,35 @@ nonisolated enum PDFSeamRepair {
             return Result(data: source, repaired: false, skippedForSize: false)
         }
         let seams = ImageJoins.find(in: page)
-        let patches = try bands(page: page, bounds: bounds, seams: seams)
+        // Restore source-image pixels covered by a later background before sampling
+        // antialiasing bands. Reuse the image stream; never sample the damaged PDF.
+        let backgroundRepairs = backgroundPatches(in: page)
+        let baseline = backgroundRepairs.isEmpty ? source : try PDFLosslessWriter.compact(source, repairBackgrounds: true)
+        guard let repairedProvider = CGDataProvider(data: baseline as CFData),
+              let repairedDocument = CGPDFDocument(repairedProvider),
+              let repairedPage = repairedDocument.page(at: 1) else { throw Failure.render }
+        let patches = try bands(page: repairedPage, bounds: bounds, seams: seams)
         // Append bands to the original object graph, retaining annotations, links,
         // text, metadata, and original image streams instead of redrawing the PDF.
         // Accept a repair that grows the file by up to `repairSizeAllowance`.
-        if let compact = try? PDFLosslessWriter.compact(source, patches: patches),
+        if let compact = try? PDFLosslessWriter.compact(baseline, patches: patches),
            compact.count <= source.count + repairSizeAllowance,
            valid(compact, bounds: bounds) {
             try Task.checkCancellation()
-            return Result(data: compact, repaired: !seams.isEmpty, skippedForSize: false)
+            return Result(data: compact, repaired: !seams.isEmpty || !backgroundRepairs.isEmpty, skippedForSize: false)
         }
         try Task.checkCancellation()
         // Repair bands would exceed the size allowance; don't grow the file further
         // just to remove a viewing artifact.
-        let compact = try? PDFLosslessWriter.compact(source)
+        let compact = try? PDFLosslessWriter.compact(baseline)
         try Task.checkCancellation()
-        let fallback = compact.flatMap { $0.count < source.count && valid($0, bounds: bounds) ? $0 : nil } ?? source
-        return Result(data: fallback, repaired: false, skippedForSize: !seams.isEmpty)
+        let fallback = compact.flatMap { $0.count < baseline.count && valid($0, bounds: bounds) ? $0 : nil } ?? baseline
+        return Result(data: fallback, repaired: !backgroundRepairs.isEmpty, skippedForSize: !seams.isEmpty)
+    }
+
+    /// References are borrowed from page; consume while its document is alive.
+    static func backgroundPatches(in page: CGPDFPage) -> [PDFLosslessWriter.ImagePatch] {
+        ImageJoins.scan(page)?.repairs ?? []
     }
 
     private static func valid(_ data: Data, bounds: CGRect) -> Bool {
@@ -112,6 +124,9 @@ nonisolated enum PDFSeamRepair {
         private var clipsPath = false
         private var regions: [CGRect] = []
         private var invalid = false
+        private var lastFill: CGRect?
+        private var previousImage: (object: CGPDFObjectRef, transform: CGAffineTransform, region: CGRect)?
+        fileprivate var repairs: [PDFLosslessWriter.ImagePatch] = []
 
         init(bounds: CGRect) {
             self.bounds = bounds
@@ -119,10 +134,14 @@ nonisolated enum PDFSeamRepair {
         }
 
         static func find(in page: CGPDFPage) -> [CGFloat] {
+            scan(page)?.joins() ?? []
+        }
+
+        static func scan(_ page: CGPDFPage) -> ImageJoins? {
             let visitor = ImageJoins(bounds: page.getBoxRect(.mediaBox))
             let stream = CGPDFContentStreamCreateWithPage(page)
             defer { CGPDFContentStreamRelease(stream) }
-            guard let table = CGPDFOperatorTableCreate() else { return [] }
+            guard let table = CGPDFOperatorTableCreate() else { return nil }
             defer { CGPDFOperatorTableRelease(table) }
             CGPDFOperatorTableSetCallback(table, "q", { _, info in ImageJoins.get(info).stack.append(ImageJoins.get(info).state) })
             CGPDFOperatorTableSetCallback(table, "Q", { _, info in
@@ -148,7 +167,24 @@ nonisolated enum PDFSeamRepair {
             for operation in ["W", "W*"] {
                 CGPDFOperatorTableSetCallback(table, operation, { _, info in ImageJoins.get(info).clipsPath = true })
             }
-            for operation in ["n", "f", "F", "f*", "S", "s", "B", "B*", "b", "b*"] {
+            for operation in ["f", "F", "f*"] {
+                CGPDFOperatorTableSetCallback(table, operation, { _, info in
+                    let v = ImageJoins.get(info)
+                    v.lastFill = !v.complexPath && !v.clipsPath ? v.path?.intersection(v.state.clip) : nil
+                    if v.clipsPath {
+                        v.state.clip = !v.complexPath && v.path != nil
+                            ? v.state.clip.intersection(v.path!) : .null
+                    }
+                    v.path = nil; v.complexPath = false; v.clipsPath = false
+                })
+            }
+            for operation in ["BT", "gs", "sh", "BI"] {
+                CGPDFOperatorTableSetCallback(table, operation, { _, info in
+                    let v = ImageJoins.get(info)
+                    v.lastFill = nil; v.previousImage = nil
+                })
+            }
+            for operation in ["n", "S", "s", "B", "B*", "b", "b*"] {
                 CGPDFOperatorTableSetCallback(table, operation, { _, info in
                     let v = ImageJoins.get(info)
                     if v.clipsPath {
@@ -161,8 +197,8 @@ nonisolated enum PDFSeamRepair {
             CGPDFOperatorTableSetCallback(table, "Do", { scanner, info in ImageJoins.get(info).image(scanner) })
             let scanner = CGPDFScannerCreate(stream, table, Unmanaged.passUnretained(visitor).toOpaque())
             defer { CGPDFScannerRelease(scanner) }
-            guard CGPDFScannerScan(scanner), !visitor.invalid, visitor.stack.isEmpty else { return [] }
-            return visitor.joins()
+            guard CGPDFScannerScan(scanner), !visitor.invalid, visitor.stack.isEmpty else { return nil }
+            return visitor
         }
 
         private static func get(_ context: UnsafeMutableRawPointer?) -> ImageJoins {
@@ -180,6 +216,10 @@ nonisolated enum PDFSeamRepair {
         }
 
         private func image(_ scanner: CGPDFScannerRef) {
+            let fill = lastFill
+            lastFill = nil
+            let previous = previousImage
+            previousImage = nil
             var name: UnsafePointer<CChar>?
             guard CGPDFScannerPopName(scanner, &name), let name,
                   let resource = CGPDFContentStreamGetResource(CGPDFScannerGetContentStream(scanner), "XObject", name) else { return }
@@ -195,6 +235,20 @@ nonisolated enum PDFSeamRepair {
             guard image.height >= image.width else { return }
             let region = image.intersection(state.clip).intersection(bounds)
             guard !region.isNull, region.width >= bounds.width - 0.01, region.height > 0 else { return }
+            // Only WebKit's full-image background rectangle, immediately followed
+            // by a touching image, qualifies. Real rules and embedded borders do not.
+            if let fill, let previous,
+               abs(fill.minX - image.minX) < 0.01, abs(fill.width - image.width) < 0.01,
+               abs(fill.minY - image.minY) <= 0.5,
+               fill.maxY > image.maxY, fill.maxY - image.maxY <= 0.5,
+               abs(previous.region.minY - image.maxY) < 0.01 {
+                let strip = CGRect(x: image.minX, y: image.maxY, width: image.width,
+                                   height: fill.maxY - image.maxY + 0.5).intersection(previous.region)
+                if !strip.isNull && strip.height > 0 {
+                    repairs.append(.init(image: previous.object, transform: previous.transform, clip: strip))
+                }
+            }
+            previousImage = (resource, t, region)
             regions.append(region)
             if regions.count > 10_000 { invalid = true }
         }
