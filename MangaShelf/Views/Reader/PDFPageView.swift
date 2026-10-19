@@ -223,7 +223,7 @@ struct PDFPageView: UIViewRepresentable {
         func scrollToOffset(_ y: CGFloat) {
             guard let scrollView else { return }
             let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
-            let clamped = min(max(0, y), maxY)
+            let clamped = y.isFinite ? min(max(0, y), maxY) : 0
             scrollView.setContentOffset(CGPoint(x: 0, y: clamped), animated: false)
             reportedPage = pageIndex(forViewportY: clamped + scrollView.bounds.height * 0.3)
             parent.currentPage = reportedPage

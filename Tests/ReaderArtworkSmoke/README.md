@@ -55,3 +55,5 @@ A local Mac benchmark of 48 warmed 1290x1152-pixel bands from Chapter 2 measured
 median PDFKit/Core Graphics render times of 52.11/52.15 ms (means 50.93/50.77 ms).
 This is a bitmap-render benchmark, not physical-iPhone FPS or a scrolling guarantee.
 The renderer change leaves cache/prefetch/tile sizes and UIKit scrolling unchanged.
+
+Capture regression checks also verify collision-safe JPG writes with `_2`, `_3` suffixes, unchanged original bytes, filename position/language parsing for numbered and legacy captures, and safe fallback/clamping for invalid or out-of-range saved positions after a chapter crop.

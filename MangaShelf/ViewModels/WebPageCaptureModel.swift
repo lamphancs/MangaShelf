@@ -6,6 +6,7 @@ import WebKit
 final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
     var document: WebCaptureDocument?
+    private(set) var captureViewportHeight: CGFloat?
     var defaultCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
     var nextChapterURL: URL?
     var isLoading = true
@@ -274,7 +275,9 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                 let defaults = UserDefaults.standard
                 let storedTopTrim = defaults.object(forKey: StorageKey.captureCropTopTrimPages) as? Int
                 let storedTrim = defaults.object(forKey: StorageKey.captureCropTrimPages) as? Int
-                defaultCrop = result.defaultCaptureCrop(viewportHeight: webView.bounds.height,
+                let viewportHeight = webView.bounds.height
+                captureViewportHeight = viewportHeight
+                defaultCrop = result.defaultCaptureCrop(viewportHeight: viewportHeight,
                                                         topTrimPages: storedTopTrim ?? CaptureCrop.defaultTopTrimPages,
                                                         trimPages: storedTrim ?? CaptureCrop.defaultTrimPages)
                 nextChapterURL = try? await findNextChapterURL()

@@ -27,6 +27,32 @@ func runReaderArtworkChecks() async throws -> String {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
+    let captureFolder = folder.appendingPathComponent("CaptureNames")
+    try FileManager.default.createDirectory(at: captureFolder, withIntermediateDirectories: true)
+    let position = ArtCapturePosition(chapterNumber: 12.5, page: 4, offset: 123.4, isEnglish: true)
+    let oldImage = Data("original capture".utf8)
+    let newImage = Data("new capture".utf8)
+    let firstCapture = try position.writeJPEG(oldImage, in: captureFolder)
+    let secondCapture = try position.writeJPEG(newImage, in: captureFolder)
+    let thirdCapture = try position.writeJPEG(newImage, in: captureFolder)
+    try check(firstCapture.lastPathComponent == position.filename
+              && secondCapture.lastPathComponent == "ch012.5_p0005_o00001234_en_2.jpg"
+              && thirdCapture.lastPathComponent == "ch012.5_p0005_o00001234_en_3.jpg",
+              "Duplicate captures get sequential suffixes")
+    let firstBytes = try Data(contentsOf: firstCapture)
+    let secondBytes = try Data(contentsOf: secondCapture)
+    try check(firstBytes == oldImage && secondBytes == newImage, "New capture never overwrites old bytes")
+    for name in [position.filename, secondCapture.lastPathComponent, thirdCapture.lastPathComponent] {
+        let decoded = ArtCapturePosition(filename: name)
+        try check(decoded?.chapterNumber == 12.5 && decoded?.page == 4 && decoded?.offset == 123.4
+                  && decoded?.isEnglish == true, "Suffixed captures preserve reader links and language")
+    }
+    try check(ArtCapturePosition(filename: "ch001_p0001_o00000000_2.jpg")?.isEnglish == false,
+              "Numbered VN capture remains VN")
+    try check(ArtCapturePosition(filename: "ch001_p0001_y00000000.jpg")?.isLegacyOffset == true,
+              "Legacy capture names remain readable")
+    try check(ArtCapturePosition(filename: "ch001_p999999999999999999999999_o00000000.jpg") == nil,
+              "Malformed capture position is rejected without a crash")
     try check(ChapterArtwork.load(from: nil).isEmpty, "Standalone PDF has no separators")
     try check(ChapterArtwork.load(from: folder).isEmpty, "Empty gallery has no separators")
     try Data("invalid image".utf8).write(to: folder.appendingPathComponent("broken.jpg"))
@@ -256,6 +282,13 @@ func runReaderArtworkChecks() async throws -> String {
               && coordinator.reportedPage == doc.pageCount - 1,
               "Go to bottom reaches closing art and reports the final PDF page")
     try check(renderedViews.last?.alpha == 1, "Go to bottom updates artwork effect immediately")
+    coordinator.scrollToOffset(1_000_000_000)
+    try check(scroll.contentOffset.y == max(0, scroll.contentSize.height - scroll.bounds.height),
+              "Old capture beyond cropped PDF clamps to the end")
+    coordinator.scrollToOffset(.nan)
+    try check(scroll.contentOffset.y == 0, "Invalid saved offset safely falls back to the start")
+    coordinator.scrollToPage(Int.max, animated: false)
+    try check(scroll.contentOffset.y == 0, "Missing old page does not crash or change the valid position")
     coordinator.scrollToOffset(400)
     var projectedOffset = CGPoint(x: 0, y: 2_000)
     coordinator.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: 0, y: 10),

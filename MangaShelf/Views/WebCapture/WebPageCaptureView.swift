@@ -56,7 +56,8 @@ struct WebPageCaptureView: View {
                     CaptureWebView(webView: model.webView)
                         .allowsHitTesting(!model.isCapturing && model.document == nil)
                     if let document = model.document {
-                        FullPageCropView(document: document, crop: $crop, overview: overview)
+                        FullPageCropView(document: document, crop: $crop, overview: overview,
+                                         trimPageHeight: model.captureViewportHeight)
                             .background(theme.libraryBackground)
                             .allowsHitTesting(!isExporting)
                     }

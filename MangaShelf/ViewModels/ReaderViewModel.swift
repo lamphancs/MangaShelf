@@ -435,6 +435,7 @@ final class ReaderViewModel {
 
         pdfDocument = nil
         currentPage = 0
+        initialOffset = 0
         restoreProgress = 0
         isLoadingChapter = true
         let doc = await Task.detached(priority: .userInitiated) { PDFDocument(url: url) }.value
@@ -469,12 +470,12 @@ final class ReaderViewModel {
 
         let chapterNum = currentChapter?.chapterNumber ?? Double(currentChapterIndex + 1)
 
-        let filename = ArtCapturePosition(
+        let position = ArtCapturePosition(
             chapterNumber: chapterNum,
             page: currentPage,
             offset: Double(scrollOffset),
             isEnglish: currentChapter?.isEnglish
-        ).filename
+        )
         let artFolder = folder.appendingPathComponent("Art")
 
         guard let jpegData = image.jpegData(compressionQuality: 0.9) else { return false }
@@ -484,9 +485,8 @@ final class ReaderViewModel {
             if !fm.fileExists(atPath: artFolder.path) {
                 try? fm.createDirectory(at: artFolder, withIntermediateDirectories: true)
             }
-            let fileURL = artFolder.appendingPathComponent(filename)
             do {
-                try jpegData.write(to: fileURL)
+                _ = try position.writeJPEG(jpegData, in: artFolder)
                 return true
             } catch {
                 return false
@@ -562,8 +562,25 @@ nonisolated struct ArtCapturePosition {
             < other.pdfOffset(legacyArtworkOffset: legacyArtworkOffset)
     }
 
+    /// A temporary sibling plus exclusive move keeps both concurrent captures.
+    func writeJPEG(_ data: Data, in folder: URL) throws -> URL {
+        let temporary = folder.appendingPathComponent(".capture-\(UUID().uuidString).tmp")
+        try data.write(to: temporary, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let stem = String(filename.dropLast(4))
+        for number in 1...10_000 {
+            let name = number == 1 ? filename : "\(stem)_\(number).jpg"
+            let target = folder.appendingPathComponent(name)
+            do {
+                try FileManager.default.moveItem(at: temporary, to: target)
+                return target
+            } catch CocoaError.fileWriteFileExists { continue }
+        }
+        throw CocoaError(.fileWriteFileExists)
+    }
+
     init?(filename: String) {
-        guard let match = filename.wholeMatch(of: /ch(\d+(?:\.\d+)?)_p(\d+)_([oy])(\d+)(_en)?\.[A-Za-z]+/),
+        guard let match = filename.wholeMatch(of: /ch(\d+(?:\.\d+)?)_p(\d+)_([oy])(\d+)(_en)?(?:_\d+)?\.[A-Za-z]+/),
               let chapter = Double(match.1),
               let page = Int(match.2), page > 0,
               let offsetKey = Int(match.4) else { return nil }
