@@ -542,7 +542,7 @@ fileprivate class PDFContentView: UIView {
 
         for i in 0..<document.pageCount {
             guard let page = document.page(at: i) else { continue }
-            let pageRect = page.bounds(for: .mediaBox)
+            let pageRect = page.readerDisplayBounds
             guard pageRect.width > 0 else { continue }
             let scale = width / pageRect.width
             let height = pageRect.height * scale
@@ -814,7 +814,7 @@ fileprivate class PDFContentView: UIView {
                 let rect = CGRect(x: 0, y: layout.offset, width: contentWidth, height: layout.height)
                 guard rect.intersects(viewport), let page = document.page(at: index),
                       let pageRef = page.pageRef else { continue }
-                let bounds = page.bounds(for: .mediaBox)
+                let bounds = page.readerDisplayBounds
                 guard bounds.width > 0 else { continue }
                 let scale = contentWidth / bounds.width
                 cg.saveGState()
@@ -827,7 +827,7 @@ fileprivate class PDFContentView: UIView {
                 // antialiasing blends those cuts with the PDF's own dark background,
                 // even when our paper is white. Keep image interpolation enabled.
                 cg.setShouldAntialias(false)
-                cg.concatenate(pageRef.getDrawingTransform(.mediaBox,
+                cg.concatenate(pageRef.getDrawingTransform(.cropBox,
                     rect: CGRect(origin: .zero, size: bounds.size), rotate: 0, preserveAspectRatio: true))
                 // PDFKit's draw method overrides the edge-antialiasing setting.
                 cg.drawPDFPage(pageRef)
@@ -1030,7 +1030,7 @@ fileprivate class PDFContentView: UIView {
                         return
                     }
 
-                    let pageRect = page.bounds(for: .mediaBox)
+                    let pageRect = page.readerDisplayBounds
                     guard pageRect.width > 0 else {
                         return
                     }
@@ -1065,7 +1065,7 @@ fileprivate class PDFContentView: UIView {
                         // Match viewport capture: do not blend fractional WebKit
                         // clipping edges with the background embedded in the PDF.
                         cgContext.setShouldAntialias(false)
-                        cgContext.concatenate(pageRef.getDrawingTransform(.mediaBox,
+                        cgContext.concatenate(pageRef.getDrawingTransform(.cropBox,
                             rect: CGRect(origin: .zero, size: pageRect.size), rotate: 0, preserveAspectRatio: true))
                         cgContext.drawPDFPage(pageRef)
                     }
@@ -1101,5 +1101,15 @@ fileprivate class PDFContentView: UIView {
             inflightOps[tileIdx] = operation
             renderQueue.addOperation(operation)
         }
+    }
+}
+
+// CropBox is the visible page; the original MediaBox remains available to the crop editor.
+extension PDFPage {
+    nonisolated var readerDisplayBounds: CGRect {
+        let bounds = bounds(for: .cropBox)
+        let rotated = abs(rotation) % 180 == 90
+        return CGRect(origin: .zero, size: rotated
+                      ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
     }
 }

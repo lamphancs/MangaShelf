@@ -85,7 +85,7 @@ final class ThumbnailService {
                 }
 
                 // Get the page bounds
-                let pageRect = firstPage.bounds(for: .mediaBox)
+                let pageRect = firstPage.readerDisplayBounds
 
                 // Calculate scale to fit thumbnail size while maintaining aspect ratio
                 let scale = min(
@@ -107,7 +107,11 @@ final class ThumbnailService {
                     context.cgContext.saveGState()
                     context.cgContext.translateBy(x: 0, y: scaledSize.height)
                     context.cgContext.scaleBy(x: scale, y: -scale)
-                    firstPage.draw(with: .mediaBox, to: context.cgContext)
+                    if let page = firstPage.pageRef {
+                        context.cgContext.concatenate(page.getDrawingTransform(.cropBox,
+                            rect: pageRect, rotate: 0, preserveAspectRatio: true))
+                        context.cgContext.drawPDFPage(page)
+                    }
                     context.cgContext.restoreGState()
                 }
 

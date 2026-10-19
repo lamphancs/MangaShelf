@@ -57,3 +57,5 @@ This is a bitmap-render benchmark, not physical-iPhone FPS or a scrolling guaran
 The renderer change leaves cache/prefetch/tile sizes and UIKit scrolling unchanged.
 
 Capture regression checks also verify collision-safe JPG writes with `_2`, `_3` suffixes, unchanged original bytes, filename position/language parsing for numbered and legacy captures, and safe fallback/clamping for invalid or out-of-range saved positions after a chapter crop.
+
+Overlay crop checks verify unchanged MediaBox, smaller CropBox, reopening the selection using only PDF bytes, expanding hidden content, removal of wholly excluded pages, rotated-page handling, and reader layout using CropBox. No backup PDF or export metadata is created.

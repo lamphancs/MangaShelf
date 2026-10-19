@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Crops the PDF of the chapter open in the reader. The selection starts at the
-/// chapter's first and last edges; saving replaces the chapter file in place.
+/// Edits the saved selection against the media bounds still present in the chapter PDF.
 struct ChapterCropView: View {
     let pdfURL: URL
     let title: String
@@ -11,6 +10,7 @@ struct ChapterCropView: View {
     @State private var document: WebCaptureDocument?
     @State private var loadFailed = false
     @State private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    @State private var savedCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var overview = true
     @State private var isSaving = false
     @State private var showReplaceConfirmation = false
@@ -59,7 +59,7 @@ struct ChapterCropView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { showReplaceConfirmation = true }
                         .fontWeight(.semibold)
-                        .disabled(document == nil || isFullChapter || isSaving)
+                        .disabled(document == nil || crop == savedCrop || isSaving)
                 }
             }
         }
@@ -69,9 +69,13 @@ struct ChapterCropView: View {
         .task {
             let url = pdfURL
             do {
-                document = try await Task.detached(priority: .userInitiated) {
-                    try WebCaptureDocument(data: Data(contentsOf: url))
+                let source = try await Task.detached(priority: .userInitiated) {
+                    let document = try WebCaptureDocument(data: Data(contentsOf: url))
+                    return (document: document, crop: try document.existingChapterCrop())
                 }.value
+                crop = source.crop
+                savedCrop = source.crop
+                document = source.document
             } catch {
                 loadFailed = true
             }
@@ -81,7 +85,7 @@ struct ChapterCropView: View {
             Button("Crop Chapter", role: .destructive) { save() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Content outside the selection is removed from the file.")
+            Text("The chapter PDF will show the selected area. Hidden areas on retained pages can be edited again. Entire pages outside the selection are removed.")
         }
         .alert("Crop", isPresented: Binding(
             get: { errorMessage != nil },

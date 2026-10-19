@@ -75,6 +75,47 @@ func runReaderArtworkChecks() async throws -> String {
     let doc = PDFDocument()
     doc.insert(PDFPage(image: red)!, at: 0)
     doc.insert(PDFPage(image: red)!, at: 1)
+    let originalPDF = doc.dataRepresentation()!
+    let editableDocument = try WebCaptureDocument(data: originalPDF)
+    let selectedRegion = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    let croppedBytes = try editableDocument.croppedChapterPDF(crop: selectedRegion)
+    let croppedDocument = PDFDocument(data: croppedBytes)!
+    let reopenedDocument = try WebCaptureDocument(data: croppedBytes)
+    let reopenedSelection = try reopenedDocument.existingChapterCrop()
+    try check(croppedDocument.pageCount == 2
+              && croppedDocument.page(at: 0)!.bounds(for: .mediaBox) == doc.page(at: 0)!.bounds(for: .mediaBox)
+              && croppedDocument.page(at: 0)!.bounds(for: .cropBox).width < doc.page(at: 0)!.bounds(for: .mediaBox).width,
+              "Overlay crop preserves media bounds and only narrows visible CropBox")
+    try check(abs(reopenedSelection.minX - selectedRegion.minX) < 0.00001
+              && abs(reopenedSelection.minY - selectedRegion.minY) < 0.00001
+              && abs(reopenedSelection.width - selectedRegion.width) < 0.00001
+              && abs(reopenedSelection.height - selectedRegion.height) < 0.00001,
+              "Same PDF reconstructs the previous crop without any backup")
+    let expandedBytes = try reopenedDocument.croppedChapterPDF(crop: CGRect(x: 0, y: 0, width: 1, height: 1))
+    let expandedDocument = PDFDocument(data: expandedBytes)!
+    try check((0..<2).allSatisfy { expandedDocument.page(at: $0)!.bounds(for: .cropBox)
+              == expandedDocument.page(at: $0)!.bounds(for: .mediaBox) },
+              "Full Chapter reveals hidden content on retained pages")
+    let removedBytes = try editableDocument.croppedChapterPDF(crop: CGRect(x: 0, y: 0.5, width: 1, height: 0.5))
+    try check(PDFDocument(data: removedBytes)?.pageCount == 1,
+              "Wholly excluded pages are still removed rather than backed up")
+    let croppedContent = PDFContentView()
+    croppedContent.configure(document: croppedDocument, width: 300, viewportHeight: 400, artwork: [])
+    let expectedCropHeight = croppedDocument.page(at: 0)!.bounds(for: .cropBox).height
+        * 300 / croppedDocument.page(at: 0)!.bounds(for: .cropBox).width
+    try check(abs(croppedContent.pageRects[0].height - expectedCropHeight) < 0.001,
+              "Reader lays out only visible CropBox content")
+    let rotatedPDF = PDFDocument(data: originalPDF)!
+    rotatedPDF.page(at: 0)!.rotation = 90
+    let rotatedSource = try WebCaptureDocument(data: rotatedPDF.dataRepresentation()!)
+    let rotatedSelection = CGRect(x: 0.1, y: 0.1, width: 0.7, height: 0.7)
+    let rotatedOutput = try rotatedSource.croppedChapterPDF(crop: rotatedSelection)
+    let rotatedReopen = try WebCaptureDocument(data: rotatedOutput)
+    let rotatedResult = try rotatedReopen.existingChapterCrop()
+    try check(PDFDocument(data: rotatedOutput)?.page(at: 0)?.rotation == 90
+              && abs(rotatedResult.minY - rotatedSelection.minY) < 0.00001,
+              "Rotated retained pages keep editable bounds without flattening")
+
     let content = PDFContentView()
     content.configure(document: doc, width: 300, viewportHeight: 400, artwork: [])
     let original = content.pageRects
@@ -337,6 +378,28 @@ func runReaderArtworkChecks() async throws -> String {
         }
         return bytes
     }
+    let cropBands = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 600)).pdfData { context in
+        context.beginPage()
+        for (index, color) in [UIColor.red, .green, .blue].enumerated() {
+            color.setFill()
+            context.cgContext.fill(CGRect(x: 0, y: index * 200, width: 300, height: 200))
+        }
+    }
+    let bandSource = try WebCaptureDocument(data: cropBands)
+    let middleBand = try bandSource.croppedChapterPDF(crop: CGRect(x: 0.1, y: 1.0 / 3, width: 0.8, height: 1.0 / 3))
+    let bandReader = PDFContentView()
+    bandReader.configure(document: PDFDocument(data: middleBand)!, width: 240, viewportHeight: 200, artwork: [])
+    let bandCapture = bandReader.captureViewport(CGRect(x: 0, y: bandReader.pageRects[0].offset, width: 240, height: 200))!
+    let bandTop = rgb(bandCapture, x: 120, y: 5)
+    let bandBottom = rgb(bandCapture, x: 120, y: 195)
+    try check(bandTop[1] > 240 && bandTop[0] < 15 && bandBottom[1] > 240 && bandBottom[2] < 15,
+              "Overlay screenshot renders only green CropBox, hiding red/blue source outside it")
+    let bandEditor = try WebCaptureDocument(data: middleBand)
+    let recoveredTop = try bandEditor.render(crop: CGRect(x: 0, y: 0, width: 1, height: 1.0 / 3), pixelWidth: 300)
+    let recoveredColor = rgb(recoveredTop, x: 150, y: 100)
+    try check(recoveredColor[0] > 240 && recoveredColor[1] < 15,
+              "Crop editor still renders hidden red source from the same PDF")
+
     // A PDF need not paint its paper. Model adjacent web images with an
     // unpainted one-point gap, plus a genuine black rule that must stay black.
     let paperData = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 1200)).pdfData { context in

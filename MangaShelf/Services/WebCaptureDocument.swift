@@ -113,16 +113,34 @@ nonisolated struct WebCaptureDocument: Sendable {
         return compact
     }
 
-    /// Crop an existing chapter while keeping its pages and original content streams.
-    /// Pages outside the selection are removed; boundary pages get a smaller media box.
-    /// Rotated pages fall back to the continuous export, which handles rotation.
+    /// Reconstruct the visible selection within the media bounds still in this file.
+    /// No backup PDF is needed: CropBox controls reading, MediaBox bounds the editor.
+    func existingChapterCrop() throws -> CGRect {
+        guard let provider = CGDataProvider(data: data as CFData),
+              let pdf = CGPDFDocument(provider) else { throw WebCaptureError.invalidDocument }
+        var selection = CGRect.null
+        for (index, layout) in pageRects.enumerated() {
+            guard let page = pdf.page(at: index + 1) else { throw WebCaptureError.invalidDocument }
+            let transform = page.getDrawingTransform(.mediaBox,
+                rect: CGRect(origin: .zero, size: layout.size), rotate: 0, preserveAspectRatio: true)
+            let visible = page.getBoxRect(.cropBox).intersection(page.getBoxRect(.mediaBox))
+                .applying(transform)
+            guard !visible.isNull, visible.width > 0, visible.height > 0 else { continue }
+            selection = selection.union(CGRect(x: visible.minX, y: layout.maxY - visible.maxY,
+                                               width: visible.width, height: visible.height))
+        }
+        guard !selection.isNull else { throw WebCaptureError.invalidDocument }
+        selection = selection.intersection(CGRect(origin: .zero, size: size))
+        return CGRect(x: selection.minX / size.width, y: selection.minY / size.height,
+                      width: selection.width / size.width, height: selection.height / size.height)
+    }
+
+    /// Overlay-only crop: preserve the retained pages' media bounds and content,
+    /// change CropBox, and remove pages wholly outside the selection.
     func croppedChapterPDF(crop: CGRect) throws -> Data {
         let rect = try cropRect(crop)
         guard let pdf = PDFDocument(data: data), pdf.pageCount == pageCount else {
             throw WebCaptureError.invalidDocument
-        }
-        guard (0..<pdf.pageCount).allSatisfy({ (pdf.page(at: $0)?.rotation ?? 0) % 360 == 0 }) else {
-            return try exportPDF(crop: crop)
         }
         for (index, pageRect) in pageRects.enumerated().reversed() {
             guard let page = pdf.page(at: index) else { throw WebCaptureError.invalidDocument }
@@ -134,11 +152,13 @@ nonisolated struct WebCaptureDocument: Sendable {
                 pdf.removePage(at: index)
                 continue
             }
-            // The canvas runs top-down from each page's top edge; PDF boxes run bottom-up.
-            let box = page.bounds(for: .mediaBox)
-            let cropped = CGRect(x: box.minX + left, y: box.maxY - (bottom - pageRect.minY),
-                                 width: right - left, height: bottom - top)
-            page.setBounds(cropped, for: .mediaBox)
+            guard let pageRef = page.pageRef else { throw WebCaptureError.invalidDocument }
+            let transform = pageRef.getDrawingTransform(.mediaBox,
+                rect: CGRect(origin: .zero, size: pageRect.size), rotate: 0, preserveAspectRatio: true)
+            let displayedCrop = CGRect(x: left, y: pageRect.maxY - bottom,
+                                       width: right - left, height: bottom - top)
+            let cropped = displayedCrop.applying(transform.inverted())
+                .intersection(page.bounds(for: .mediaBox))
             page.setBounds(cropped, for: .cropBox)
         }
         guard pdf.pageCount > 0,
