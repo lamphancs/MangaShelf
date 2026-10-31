@@ -17,6 +17,7 @@ final class ReaderViewModel {
     let book: Book
     var currentPage: Int
     var isOverlayVisible = false
+    private var isInteractingWithThumbnail = false
     var isLoadingChapter = false
     var pdfDocument: PDFDocument?
 
@@ -186,6 +187,15 @@ final class ReaderViewModel {
             scheduleOverlayHide()
         } else {
             cancelOverlayHide()
+        }
+    }
+
+    func setThumbnailInteraction(_ active: Bool) {
+        isInteractingWithThumbnail = active
+        if active {
+            cancelOverlayHide()
+        } else if isOverlayVisible {
+            scheduleOverlayHide()
         }
     }
 
@@ -498,6 +508,7 @@ final class ReaderViewModel {
 
     private func scheduleOverlayHide() {
         cancelOverlayHide()
+        guard !isInteractingWithThumbnail else { return }
 
         overlayHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))

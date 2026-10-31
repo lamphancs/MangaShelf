@@ -193,6 +193,79 @@ func runReaderArtworkChecks() async throws -> String {
     try check(coordinator.pendingRestoreOffset == 200, "Saved position preserved while artwork is loading")
     for _ in 0..<100 where !restored { try await Task.sleep(for: .milliseconds(50)) }
     try check(restored && scroll.contentOffset.y == 200 + content.openingContentOffset, "Existing saved position restores with opening art")
+    coordinator.seekThumbnail(0.1)
+    let storyHeight = content.pageRects.last!.offset + content.pageRects.last!.height
+        - content.pageRects.first!.offset
+    try check(abs(scroll.contentOffset.y - (content.pageRects.first!.offset + min(max(0, storyHeight - scroll.bounds.height), storyHeight * 0.1))) < 1,
+              "Thumbnail seeks within PDF content, excluding opening artwork")
+    try check(abs(coordinator.thumbnailProgress() - min(max(0, storyHeight - scroll.bounds.height) / storyHeight, 0.1)) < 0.001,
+              "Reader position maps back to the same thumbnail coordinate")
+    coordinator.seekThumbnail(1)
+    try check(scroll.contentOffset.y <= content.pageRects.last!.offset + content.pageRects.last!.height - scroll.bounds.height,
+              "Thumbnail end stops at PDF content rather than closing artwork")
+    let thumbnail = ReaderThumbnailScrollView(frame: CGRect(x: 0, y: 0, width: 64, height: 280))
+    var thumbnailSeek: CGFloat = -1
+    var thumbnailBusy = false
+    thumbnail.onSeek = { thumbnailSeek = $0 }
+    thumbnail.onInteraction = { thumbnailBusy = $0 }
+    thumbnail.configure(document: doc, viewport: CGRect(x: 0, y: 0.5, width: 1, height: 0.2))
+    thumbnail.layoutIfNeeded()
+    thumbnail.accessibilityIncrement()
+    try check(abs(thumbnailSeek - 0.55) < 0.001 && !thumbnailBusy,
+              "Accessible thumbnail navigation seeks and releases overlay hold")
+    let thumbnailScroll = thumbnail.subviews.compactMap { $0 as? UIScrollView }.first!
+    try check(abs(thumbnailScroll.contentSize.height - storyHeight * 64 / 300) < 1,
+              "Floating thumbnail omits reader safe-area padding for accurate seeking")
+    thumbnail.scrollViewWillBeginDragging(thumbnailScroll)
+    try check(thumbnailBusy, "Dragging thumbnail holds overlay open")
+    thumbnail.scrollViewDidEndDragging(thumbnailScroll, willDecelerate: true)
+    try check(thumbnailBusy, "Thumbnail deceleration keeps overlay open")
+    thumbnail.scrollViewDidEndDecelerating(thumbnailScroll)
+    try check(!thumbnailBusy, "Overlay hold ends after deceleration")
+    try check(abs(thumbnail.marker.frame.height - thumbnailScroll.contentSize.height * 0.2) < 1
+              && thumbnail.marker.frame.width == 64,
+              "Thumbnail box represents the visible PDF area at full thumbnail width")
+    thumbnail.clear()
+    let tallBytes = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 12000)).pdfData { context in
+        context.beginPage()
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 300, height: 12000))
+    }
+    let scrubDocument = PDFDocument(data: tallBytes)!
+    let tallParent = PDFPageView(pdfDocument: scrubDocument, artFolderURL: nil, currentPage: .constant(0),
+                                 initialOffset: 0, onPageChange: { _ in }, onTap: {})
+    let tallCoordinator = tallParent.makeCoordinator()
+    let tallScroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 300, height: 600))
+    let tallContent = PDFContentView()
+    tallScroll.addSubview(tallContent)
+    tallCoordinator.scrollView = tallScroll
+    tallCoordinator.contentView = tallContent
+    tallScroll.delegate = tallCoordinator
+    tallCoordinator.loadDocument(scrubDocument, width: 300, artFolderURL: nil, restorePage: 0)
+    for _ in 0..<100 where tallContent.pageRects.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+    let tallThumbnail = ReaderThumbnailScrollView(frame: CGRect(x: 0, y: 0, width: 64, height: 480))
+    tallThumbnail.onSeek = { tallCoordinator.seekThumbnail($0) }
+    tallThumbnail.configure(document: scrubDocument, viewport: tallCoordinator.thumbnailViewport())
+    tallThumbnail.layoutIfNeeded()
+    let rail = tallThumbnail.subviews.compactMap { $0 as? UIScrollView }.first!
+    tallThumbnail.scrollViewWillBeginDragging(rail)
+    rail.contentOffset.y = (rail.contentSize.height - rail.bounds.height) * 0.5
+    tallThumbnail.scrollViewDidScroll(rail)
+    try check(tallScroll.contentOffset.y > 5000, "Scrolling thumbnail moves the actual tall chapter continuously")
+    let visible = tallCoordinator.thumbnailViewport()
+    tallThumbnail.configure(document: scrubDocument, viewport: visible)
+    tallThumbnail.layoutIfNeeded()
+    try check(abs(tallThumbnail.marker.frame.height - visible.height * rail.contentSize.height) < 0.1,
+              "Viewport box height matches the reader viewport on a tall PDF")
+    try check(abs(tallThumbnail.marker.frame.minY - (visible.minY * rail.contentSize.height - rail.contentOffset.y)) < 0.1,
+              "Viewport box follows the correct PDF region while dragging")
+    rail.contentOffset.y = rail.contentSize.height - rail.bounds.height
+    tallThumbnail.scrollViewDidScroll(rail)
+    try check(abs(tallScroll.contentOffset.y - (tallContent.pageRects.last!.offset + tallContent.pageRects.last!.height - tallScroll.bounds.height)) < 1,
+              "Scrolling thumbnail to the end reaches the last visible PDF region")
+    tallThumbnail.scrollViewDidEndDragging(rail, willDecelerate: false)
+    tallThumbnail.clear()
+    tallCoordinator.clearDocument()
     let renderedViews = content.subviews.compactMap { $0 as? UIImageView }
     renderedViews[0].image = image(.blue, size: CGSize(width: 300, height: 400))
     coordinator.scrollToOffset(200)

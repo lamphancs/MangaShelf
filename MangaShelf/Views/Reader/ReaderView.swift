@@ -24,6 +24,8 @@ struct ReaderView: View {
     @State private var bookmarkColor: BookmarkColor = .red
     @State private var isEditingExistingBookmark = false
     @State private var cropTarget: CropTarget?
+    @State private var thumbnailViewport: CGRect = .zero
+    @State private var thumbnailNavigation = ReaderThumbnailNavigation()
 
     private struct CropTarget: Identifiable {
         let id = UUID()
@@ -69,6 +71,15 @@ struct ReaderView: View {
                 },
                 onRestoreComplete: {
                     viewModel.restoreDidComplete()
+                },
+                onSeekReady: { seek, position in
+                    thumbnailNavigation.seek = seek
+                    thumbnailNavigation.viewport = position
+                },
+                onThumbnailViewportChange: { viewport in
+                    if viewModel.isOverlayVisible {
+                        DispatchQueue.main.async { thumbnailViewport = viewport }
+                    }
                 }
             )
             .ignoresSafeArea()
@@ -150,6 +161,29 @@ struct ReaderView: View {
                     viewModel.goToChapter(index: index, modelContext: modelContext)
                 }
             )
+
+            if viewModel.isOverlayVisible, !viewModel.isLoadingChapter,
+               let document = viewModel.pdfDocument {
+                GeometryReader { geometry in
+                    ReaderThumbnailView(
+                        document: document,
+                        viewport: thumbnailViewport,
+                        accent: UIColor(theme.accent),
+                        onSeek: { thumbnailNavigation.seek?($0) },
+                        onInteraction: { viewModel.setThumbnailInteraction($0) }
+                    )
+                    .frame(width: 64, height: min(480, geometry.size.height * 0.65))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .modifier(ReaderThumbnailGlass())
+                    .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                }
+                .onAppear {
+                    thumbnailViewport = thumbnailNavigation.viewport?() ?? .zero
+                }
+                .onDisappear { viewModel.setThumbnailInteraction(false) }
+            }
 
             if book.isSeries {
                 VStack(spacing: 16) {
@@ -317,11 +351,6 @@ struct ReaderView: View {
         .statusBar(hidden: !viewModel.isOverlayVisible)
         .onAppear {
             viewModel.beginRestoreTimeout()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                withAnimation {
-                    viewModel.isOverlayVisible = false
-                }
-            }
         }
         .onDisappear {
             viewModel.saveProgress(modelContext: modelContext)
@@ -352,6 +381,24 @@ struct ReaderView: View {
                     viewModel.isOverlayVisible = false
                 }
             }
+        }
+    }
+}
+
+/// UIKit registers callbacks during makeUIView; keep them in a stable reference rather
+/// than mutating SwiftUI state while its view hierarchy is being created.
+@MainActor
+private final class ReaderThumbnailNavigation {
+    var seek: ((CGFloat) -> Void)?
+    var viewport: (() -> CGRect)?
+}
+
+private struct ReaderThumbnailGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
         }
     }
 }
