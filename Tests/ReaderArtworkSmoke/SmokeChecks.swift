@@ -27,6 +27,59 @@ func runReaderArtworkChecks() async throws -> String {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
+    let cropFormat = UIGraphicsImageRendererFormat()
+    cropFormat.scale = 1
+    let cropSource = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 100), format: cropFormat).image { context in
+        UIColor.red.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 50))
+        UIColor.blue.setFill()
+        context.fill(CGRect(x: 0, y: 50, width: 200, height: 50))
+    }
+    let artCrop = try ArtImageCropper.crop(cropSource, to: CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5))
+    try check(artCrop.cgImage?.width == 100 && artCrop.cgImage?.height == 50,
+              "Album crop keeps the selected original pixel dimensions")
+    var cropPixel = [UInt8](repeating: 0, count: 4)
+    cropPixel.withUnsafeMutableBytes { bytes in
+        let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(artCrop.cgImage!, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    try check(cropPixel[2] > 240 && cropPixel[0] < 15,
+              "Crop selects the bottom blue region rather than the top red region")
+    let rotatedArt = UIImage(cgImage: cropSource.cgImage!, scale: 1, orientation: .right)
+    let rotatedCrop = try ArtImageCropper.crop(rotatedArt, to: CGRect(x: 0, y: 0, width: 1, height: 1))
+    try check(rotatedCrop.imageOrientation == .up && rotatedCrop.size == rotatedArt.size,
+              "Crop normalizes orientation without changing displayed image dimensions")
+    let artCropFolder = folder.appendingPathComponent("CropAlbum")
+    try FileManager.default.createDirectory(at: artCropFolder, withIntermediateDirectories: true)
+    for ext in ["png", "jpg"] {
+        let cropURL = artCropFolder.appendingPathComponent("ch012_p0005_o00123450.\(ext)")
+        let original = ext == "png" ? cropSource.pngData()! : cropSource.jpegData(compressionQuality: 0.95)!
+        try original.write(to: cropURL)
+        let originalType = CGImageSourceGetType(CGImageSourceCreateWithURL(cropURL as CFURL, nil)!)! as String
+        _ = try ArtImageCropper.replaceImage(at: cropURL, with: artCrop)
+        let saved = CGImageSourceCreateWithURL(cropURL as CFURL, nil)!
+        let savedImage = CGImageSourceCreateImageAtIndex(saved, 0, nil)!
+        try check(savedImage.width == 100 && savedImage.height == 50,
+                  "Saved album crop replaces original pixels at the same path")
+        try check(CGImageSourceGetType(saved)! as String == originalType,
+                  "Album crop preserves the original image encoding")
+        try check(ArtCapturePosition(filename: cropURL.lastPathComponent)?.page == 4,
+                  "Same-name crop preserves Open in Reader metadata")
+    }
+    let cropFiles = try FileManager.default.contentsOfDirectory(atPath: artCropFolder.path)
+    try check(cropFiles.count == 2, "Cropping creates no renamed duplicates or temporary files")
+    let brokenCropURL = artCropFolder.appendingPathComponent("broken.png")
+    let brokenBytes = Data("not an image".utf8)
+    try brokenBytes.write(to: brokenCropURL)
+    do {
+        _ = try ArtImageCropper.replaceImage(at: brokenCropURL, with: artCrop)
+        try check(false, "Invalid source image must fail")
+    } catch ArtImageCropper.CropError.unreadableImage {
+        let unchanged = try Data(contentsOf: brokenCropURL)
+        try check(unchanged == brokenBytes, "Failed crop preserves the original file")
+    }
     let captureFolder = folder.appendingPathComponent("CaptureNames")
     try FileManager.default.createDirectory(at: captureFolder, withIntermediateDirectories: true)
     let position = ArtCapturePosition(chapterNumber: 12.5, page: 4, offset: 123.4, isEnglish: true)

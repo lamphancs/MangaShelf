@@ -138,6 +138,9 @@ struct ChapterListView: View {
                 },
                 loadFullImage: { id in
                     id == "__cover__" ? nil : await loadFullArtImage(filename: id)
+                },
+                onReplaceArt: { filename, image in
+                    try await replaceArtImage(filename: filename, image: image)
                 }
             )
         }
@@ -952,6 +955,28 @@ struct ChapterListView: View {
         let filename = "art_\(Int(Date().timeIntervalSince1970 * 1000)).\(ext)"
         let fileURL = artFolder.appendingPathComponent(filename)
         try? data.write(to: fileURL)
+    }
+
+    private func replaceArtImage(filename: String, image: UIImage) async throws -> UIImage {
+        guard book.isSeries, let folderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData) else {
+            throw ArtImageCropper.CropError.unavailableFolder
+        }
+        let fileURL = rootURL.appendingPathComponent(folderName)
+            .appendingPathComponent("Art").appendingPathComponent(filename)
+        let preview = try await Task.detached(priority: .userInitiated) {
+            guard rootURL.startAccessingSecurityScopedResource() else {
+                throw ArtImageCropper.CropError.unavailableFolder
+            }
+            defer { rootURL.stopAccessingSecurityScopedResource() }
+            return try ArtImageCropper.replaceImage(at: fileURL, with: image)
+        }.value
+        // Replace the cached preview too: album reloads intentionally reuse images by filename.
+        if let index = artImages.firstIndex(where: { $0.id == filename }) {
+            artImages[index] = ArtItem(id: filename, image: preview)
+        }
+        return preview
     }
 
     private func deleteArtFile(filename: String) async {

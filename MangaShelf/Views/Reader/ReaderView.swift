@@ -172,7 +172,7 @@ struct ReaderView: View {
                         onSeek: { thumbnailNavigation.seek?($0) },
                         onInteraction: { viewModel.setThumbnailInteraction($0) }
                     )
-                    .frame(width: 64, height: min(480, geometry.size.height * 0.65))
+                    .frame(width: 64, height: min(600, geometry.size.height * 0.78))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .modifier(ReaderThumbnailGlass())
                     .shadow(color: .black.opacity(0.25), radius: 10, y: 4)

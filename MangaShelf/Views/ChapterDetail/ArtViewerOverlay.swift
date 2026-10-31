@@ -54,6 +54,12 @@ struct ArtViewerOverlay: View {
     @State private var controlsVisible = true
     @State private var dragOffset: CGFloat = 0
     @State private var showCropMode = false
+    @State private var imageCropTarget: ImageCropTarget?
+
+    private struct ImageCropTarget: Identifiable {
+        let id: String
+        let image: UIImage
+    }
     @State private var isDismissing = false
     @State private var appeared = false
     /// Full-resolution image for the current item only, so at most one is held in memory.
@@ -70,13 +76,15 @@ struct ArtViewerOverlay: View {
     var openInReaderAction: ((String) -> (() -> Void)?)?
     /// Loads the full-resolution image for an art item (by id), or `nil` to keep the preview.
     var loadFullImage: ((String) async -> UIImage?)?
+    var onReplaceArt: ((String, UIImage) async throws -> UIImage)?
 
     init(artImages: [ArtItem], initialIndex: Int,
          onDeleteFile: @escaping (String) async -> Void,
          onSetCover: @escaping (UIImage) async -> Void,
          onOpenInFolder: (() -> Void)? = nil,
          openInReaderAction: ((String) -> (() -> Void)?)? = nil,
-         loadFullImage: ((String) async -> UIImage?)? = nil) {
+         loadFullImage: ((String) async -> UIImage?)? = nil,
+         onReplaceArt: ((String, UIImage) async throws -> UIImage)? = nil) {
         _artImages = State(initialValue: artImages)
         _currentIndex = State(initialValue: min(initialIndex, max(artImages.count - 1, 0)))
         self.onDeleteFile = onDeleteFile
@@ -84,6 +92,7 @@ struct ArtViewerOverlay: View {
         self.onOpenInFolder = onOpenInFolder
         self.openInReaderAction = openInReaderAction
         self.loadFullImage = loadFullImage
+        self.onReplaceArt = onReplaceArt
     }
 
     private var currentItemID: String? {
@@ -197,62 +206,11 @@ struct ArtViewerOverlay: View {
                         thumbnailStrip
                     }
 
-                    HStack {
-                        let isCoverCurrent = currentIndex >= 0 && currentIndex < artImages.count && artImages[currentIndex].isCover
-
-                        Menu {
-                            if !isCoverCurrent,
-                               let openInReader = openInReaderAction?(artImages[currentIndex].id) {
-                                Button {
-                                    openInReader()
-                                    performDismiss(direction: -1)
-                                } label: {
-                                    Label("Open in Reader", systemImage: "book")
-                                }
-                            }
-
-                            if !isCoverCurrent {
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.25)) {
-                                        showCropMode = true
-                                    }
-                                } label: {
-                                    Label("Use as Cover Image", systemImage: "book.closed")
-                                }
-                            }
-
-                            if let onOpenInFolder {
-                                Button {
-                                    onOpenInFolder()
-                                } label: {
-                                    Label("Show in Files", systemImage: "folder")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-
-                        Spacer()
-
-                        if !isCoverCurrent {
-                            Button(role: .destructive) {
-                                Task { await deleteArt() }
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 20, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 44, height: 44)
-                                    .background(.ultraThinMaterial, in: Circle())
-                            }
-                        }
+                    if !artImages.isEmpty {
+                        bottomToolbar
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 8)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
                 }
                 .transition(.opacity)
             }
@@ -275,6 +233,20 @@ struct ArtViewerOverlay: View {
                 .transition(.opacity)
             }
         }
+        .fullScreenCover(item: $imageCropTarget) { target in
+            ArtImageCropOverlay(image: target.image, onSave: { selection in
+                guard let onReplaceArt else { return }
+                let cropped = try await Task.detached(priority: .userInitiated) {
+                    try ArtImageCropper.crop(target.image, to: selection)
+                }.value
+                let preview = try await onReplaceArt(target.id, cropped)
+                if let index = artImages.firstIndex(where: { $0.id == target.id }) {
+                    artImages[index] = ArtItem(id: target.id, image: preview)
+                    fullImage = (target.id, cropped)
+                }
+                imageCropTarget = nil
+            }, onCancel: { imageCropTarget = nil })
+        }
         .background(ClearFullScreenBackground())
         .preferredColorScheme(.dark)
         .statusBarHidden(!controlsVisible)
@@ -285,6 +257,68 @@ struct ArtViewerOverlay: View {
             // Replacing the previous full image releases it.
             fullImage = image.map { (id, $0) }
         }
+    }
+
+    private var bottomToolbar: some View {
+        let item = artImages[currentIndex]
+        let imageReady = loadFullImage == nil || fullImage?.id == item.id
+        return ZStack {
+            HStack {
+                Menu {
+                    if let onOpenInFolder {
+                        Button(action: onOpenInFolder) {
+                            Label("Show in Files", systemImage: "folder")
+                        }
+                    }
+                    if !item.isCover, let openInReader = openInReaderAction?(item.id) {
+                        Button {
+                            openInReader()
+                            performDismiss(direction: -1)
+                        } label: {
+                            Label("Open in Reader", systemImage: "book")
+                        }
+                    }
+                } label: { toolbarIcon("ellipsis") }
+                .accessibilityLabel("More options")
+
+                Spacer()
+                if !item.isCover {
+                    Button(role: .destructive) {
+                        Task { await deleteArt() }
+                    } label: { toolbarIcon("trash") }
+                    .accessibilityLabel("Delete image")
+                } else {
+                    Color.clear.frame(width: 44, height: 44)
+                }
+            }
+
+            if !item.isCover {
+                HStack(spacing: 12) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) { showCropMode = true }
+                    } label: { toolbarIcon("book.closed") }
+                    .accessibilityLabel("Use as Cover Image")
+
+                    if onReplaceArt != nil {
+                        Button {
+                            imageCropTarget = ImageCropTarget(id: item.id, image: displayImage(at: currentIndex))
+                        } label: { toolbarIcon("crop") }
+                        .accessibilityLabel("Crop image")
+                    }
+                }
+                // Keep the cover button centered, with crop immediately to its right.
+                .offset(x: onReplaceArt == nil ? 0 : 28)
+                .disabled(!imageReady)
+            }
+        }
+    }
+
+    private func toolbarIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 20, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+            .background(.ultraThinMaterial, in: Circle())
     }
 
     private var thumbnailStrip: some View {
