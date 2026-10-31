@@ -269,9 +269,8 @@ struct WebPageCaptureView: View {
 
     private var shareLinkMenu: some View {
         Menu {
-            Button("Save as Series Link") { shareCurrentLink(as: .series) }
-            Button("Save as Latest Chapter Link") { shareCurrentLink(as: .latestChapter) }
-            Button("Save as Eng Version Link") { shareCurrentLink(as: .englishSeries) }
+            Button("Save as Series Homepage") { shareCurrentLink(as: isEnglish ? .englishSeries : .series) }
+            Button("Save as Latest Chapter Link") { shareCurrentLink(as: isEnglish ? .englishLatestChapter : .latestChapter) }
         } label: {
             Image(systemName: "square.and.arrow.up")
                 .frame(width: browserSideWidth, height: browserToolbarHeight)
@@ -608,7 +607,7 @@ struct WebPageCaptureView: View {
     }
 }
 
-private struct CaptureWebView: UIViewRepresentable {
+struct CaptureWebView: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}

@@ -9,6 +9,8 @@ import SwiftData
 struct BookSeriesData: Codable {
     var note: String?
     var url: String?
+    var englishLatestChapterURL: String?
+    var englishLatestChapterNumber: String?
     var englishSeriesURL: String?
     var latestChapterURL: String?
     var latestChapterNumber: String?
@@ -40,7 +42,7 @@ struct BookSeriesData: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case latestChapterURL, latestChapterNumber, englishSeriesURL
+        case latestChapterURL, latestChapterNumber, englishSeriesURL, englishLatestChapterURL, englishLatestChapterNumber
         case note, url, currentChapterIndex, lastReadDate, bookmarks
         case chapterProgress, chapterOffsets, chapterPageCounts, dateAdded, title
     }
@@ -55,6 +57,9 @@ struct BookSeriesData: Codable {
         note = try c.decodeIfPresent(String.self, forKey: .note)
         url = try c.decodeIfPresent(String.self, forKey: .url)
         englishSeriesURL = try c.decodeIfPresent(String.self, forKey: .englishSeriesURL)
+        englishLatestChapterURL = try c.decodeIfPresent(String.self, forKey: .englishLatestChapterURL)
+        englishLatestChapterNumber = try c.decodeIfPresent(String.self, forKey: .englishLatestChapterNumber)
+        SeriesLinks.migrateEnglish(homepage: &englishSeriesURL, latest: &englishLatestChapterURL, number: &englishLatestChapterNumber)
         latestChapterURL = try c.decodeIfPresent(String.self, forKey: .latestChapterURL)
         latestChapterNumber = try c.decodeIfPresent(String.self, forKey: .latestChapterNumber)
         currentChapterIndex = try c.decodeIfPresent(Int.self, forKey: .currentChapterIndex) ?? 0
@@ -177,6 +182,7 @@ final class BookDataService {
 
     @MainActor
     func restoreIfNeeded(book: Book, modelContext: ModelContext) async {
+        book.migrateEnglishLinks()
         guard book.isSeries, let folderName = book.folderName else { return }
         guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey),
               let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData),
@@ -200,6 +206,12 @@ final class BookDataService {
 
         if (book.englishSeriesURL ?? "").isEmpty, let url = seriesData.englishSeriesURL, !url.isEmpty {
             book.englishSeriesURL = url
+            changed = true
+        }
+
+        if (book.englishLatestChapterURL ?? "").isEmpty, let url = seriesData.englishLatestChapterURL, !url.isEmpty {
+            book.englishLatestChapterURL = url
+            book.englishLatestChapterNumber = seriesData.englishLatestChapterNumber
             changed = true
         }
 
@@ -314,7 +326,10 @@ final class BookDataService {
         )
         data.note = book.seriesNote
         data.url = book.seriesURL
+        book.migrateEnglishLinks()
         data.englishSeriesURL = book.englishSeriesURL
+        data.englishLatestChapterURL = book.englishLatestChapterURL
+        data.englishLatestChapterNumber = book.englishLatestChapterNumber
         data.latestChapterURL = book.latestChapterURL
         data.latestChapterNumber = book.latestChapterNumber
         data.dateAdded = book.dateAdded

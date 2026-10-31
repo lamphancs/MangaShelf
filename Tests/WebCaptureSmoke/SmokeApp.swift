@@ -60,6 +60,50 @@ struct CaptureSmokeView: View {
         }
     }
 
+    @MainActor
+    func checkLanguageLinks() async throws -> [String] {
+        var results: [String] = []
+        func check(_ passed: Bool, _ message: String) {
+            results.append("\(passed ? "PASS" : "FAIL"): \(message)")
+        }
+        let old = try JSONDecoder().decode(BookSeriesData.self, from: Data(
+            #"{"englishSeriesURL":"https://toongod.org/webtoon/fixture/chapter-12.5/","note":"Shared"}"#.utf8))
+        check(old.englishLatestChapterNumber == "12.5"
+              && old.englishLatestChapterURL?.contains("chapter-12.5") == true
+              && old.englishSeriesURL == "https://toongod.org/webtoon/fixture/"
+              && old.note == "Shared", "Legacy EN chapter link splits into homepage and latest chapter")
+        let originalHome = try JSONDecoder().decode(BookSeriesData.self, from: Data(
+            #"{"englishSeriesURL":"https://toongod.org/webtoon/fixture/"}"#.utf8))
+        check(originalHome.englishLatestChapterURL == nil && originalHome.englishSeriesURL != nil,
+              "Legacy EN homepage stays a homepage")
+        let container = try ModelContainer(for: Book.self, Chapter.self, Bookmark.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let book = Book(title: "Languages", filename: "Languages", filePath: "", isSeries: true, folderName: folder.lastPathComponent)
+        context.insert(book)
+        book.seriesURL = "https://example.com/vn/fixture/"
+        book.latestChapterURL = "https://example.com/vn/fixture/chapter-10/"
+        book.latestChapterNumber = "10"
+        book.englishSeriesURL = "https://toongod.org/webtoon/fixture/"
+        book.seriesNote = "Shared note"
+        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 100, height: 100)).pdfData { $0.beginPage() }
+        _ = try await ImportService().saveCapturedChapter(pdf, for: book, filename: "Chapter 12.5",
+            seriesFolderURL: folder, sourceURL: URL(string: "https://toongod.org/webtoon/fixture/chapter-12.5/"),
+            chapterTitle: "Chapter 12.5", isEnglish: true, modelContext: context)
+        let saved = await BookDataService.shared.load(seriesFolderURL: folder)
+        check(saved?.englishLatestChapterNumber == "12.5" && saved?.latestChapterNumber == "10"
+              && saved?.englishSeriesURL == book.englishSeriesURL && saved?.url == book.seriesURL
+              && saved?.note == "Shared note", "EN capture persists separate latest link and preserves both homepages, VN link, shared note")
+        check(book.sortedChapters.allSatisfy(\.isEnglish), "EN capture is stored in EN folder")
+        check(BookLinkKind.englishLatestChapter.isEnglish && BookLinkKind.englishLatestChapter.isLatestChapter
+              && !BookLinkKind.latestChapter.isEnglish && !BookLinkKind.englishSeries.isLatestChapter,
+              "Link editor distinguishes homepage, latest chapter, and language")
+        return results
+    }
+
     func checkBrowsing() async {
         if ProcessInfo.processInfo.environment["CAPTURE_TEST_ONLY"] == "long" {
             do {
@@ -181,6 +225,18 @@ struct CaptureSmokeView: View {
             browsingChecks.append("\(normalSession.webView.configuration.websiteDataStore.isPersistent && !model.webView.configuration.websiteDataStore.isPersistent ? "PASS" : "FAIL"): Normal sessions persist while private sessions remain ephemeral")
             normalSession.close()
             if ProcessInfo.processInfo.environment["CAPTURE_TEST_ONLY"] == "browser" {
+                browsingChecks.append(contentsOf: try await checkLanguageLinks())
+                let store = WKWebsiteDataStore.nonPersistent()
+                var presentations = 0
+                let root = URL(string: ProcessInfo.processInfo.environment["CAPTURE_SMOKE_URL"]!)!
+                for series in ["one", "two"] {
+                    let page = root.appendingPathComponent("updates/\(series)", isDirectory: true)
+                    let latest = try await ChapterUpdateSource.fetch(page, dataStore: store) { _ in
+                        presentations += 1
+                    }
+                    browsingChecks.append("\(latest == 42 ? "PASS" : "FAIL"): Chapter check after verification for \(series)")
+                }
+                browsingChecks.append("\(presentations == 1 ? "PASS" : "FAIL"): Repeated challenge and second private series use one verification")
                 write(browsingChecks.joined(separator: "\n"))
                 return
             }

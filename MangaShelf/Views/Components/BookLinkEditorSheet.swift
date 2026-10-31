@@ -2,41 +2,24 @@ import SwiftUI
 import SwiftData
 
 enum BookLinkKind: String, Identifiable {
-    case series, latestChapter, englishSeries
+    case series, latestChapter, englishSeries, englishLatestChapter
     var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .series: "Series Link"
-        case .latestChapter: "Latest Chapter Link"
-        case .englishSeries: "Eng Version"
-        }
-    }
-    var addLabel: String {
-        switch self {
-        case .series: "Add series link"
-        case .latestChapter: "Add latest chapter link"
-        case .englishSeries: "Add Eng version link"
-        }
-    }
-    var sectionTitle: String {
-        switch self {
-        case .series: "Series table of contents"
-        case .latestChapter: "Latest chapter"
-        case .englishSeries: "English version of the series"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .series: "link"
-        case .latestChapter: "book.pages"
-        case .englishSeries: "globe"
-        }
+    var isEnglish: Bool { self == .englishSeries || self == .englishLatestChapter }
+    var isLatestChapter: Bool { self == .latestChapter || self == .englishLatestChapter }
+    var title: String { (isLatestChapter ? "Latest Chapter" : "Series Homepage") + (isEnglish ? " · EN" : " · VN") }
+    var addLabel: String { isLatestChapter ? "Add latest chapter link" : "Add series homepage" }
+    var sectionTitle: String { isLatestChapter ? "Latest chapter" : "Series homepage" }
+    var icon: String { isLatestChapter ? "book.pages.fill" : "house.fill" }
+    var numberKeyPath: ReferenceWritableKeyPath<Book, String?> {
+        if isEnglish { return \Book.englishLatestChapterNumber }
+        return \Book.latestChapterNumber
     }
     var urlKeyPath: ReferenceWritableKeyPath<Book, String?> {
         switch self {
         case .series: \Book.seriesURL
         case .latestChapter: \Book.latestChapterURL
         case .englishSeries: \Book.englishSeriesURL
+        case .englishLatestChapter: \Book.englishLatestChapterURL
         }
     }
 
@@ -78,13 +61,13 @@ struct BookLinkEditorSheet: View {
         _urlInput = State(initialValue: initialURL)
         let suggestion = CaptureFileName.chapterSuggestion(url: URL(string: initialURL), title: pageTitle)
         let inferred = suggestion == "Chapter" ? "" : String(suggestion.dropFirst("Chapter ".count))
-        _numberInput = State(initialValue: sharedURL == nil ? (book.latestChapterNumber ?? inferred) : inferred)
+        _numberInput = State(initialValue: sharedURL == nil ? (book[keyPath: kind.numberKeyPath] ?? inferred) : inferred)
     }
 
     private var trimmedURL: String { urlInput.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedNumber: String { numberInput.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var canSave: Bool {
-        trimmedURL.isEmpty || (BookLinkKind.webURL(trimmedURL) != nil && (kind != .latestChapter || !trimmedNumber.isEmpty))
+        trimmedURL.isEmpty || (BookLinkKind.webURL(trimmedURL) != nil && (!kind.isLatestChapter || !trimmedNumber.isEmpty))
     }
 
     var body: some View {
@@ -95,7 +78,7 @@ struct BookLinkEditorSheet: View {
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    if kind == .latestChapter {
+                    if kind.isLatestChapter {
                         TextField("Chapter number", text: $numberInput)
                             .keyboardType(.decimalPad)
                     }
@@ -131,7 +114,7 @@ struct BookLinkEditorSheet: View {
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
         .onChange(of: urlInput) { _, value in
-            guard kind == .latestChapter else { return }
+            guard kind.isLatestChapter else { return }
             let suggestion = CaptureFileName.chapterSuggestion(url: URL(string: value), title: nil)
             if suggestion != "Chapter" { numberInput = String(suggestion.dropFirst("Chapter ".count)) }
         }
@@ -144,11 +127,11 @@ struct BookLinkEditorSheet: View {
 
     private func save(remove: Bool) {
         let oldURL = book[keyPath: kind.urlKeyPath]
-        let oldNumber = book.latestChapterNumber
+        let oldNumber = book[keyPath: kind.numberKeyPath]
         let value = remove || trimmedURL.isEmpty ? nil : BookLinkKind.webURL(trimmedURL)?.absoluteString
         book[keyPath: kind.urlKeyPath] = value
-        if kind == .latestChapter {
-            book.latestChapterNumber = value == nil ? nil : trimmedNumber
+        if kind.isLatestChapter {
+            book[keyPath: kind.numberKeyPath] = value == nil ? nil : trimmedNumber
         }
         do {
             try modelContext.save()
@@ -160,7 +143,7 @@ struct BookLinkEditorSheet: View {
             }
         } catch {
             book[keyPath: kind.urlKeyPath] = oldURL
-            if kind == .latestChapter { book.latestChapterNumber = oldNumber }
+            if kind.isLatestChapter { book[keyPath: kind.numberKeyPath] = oldNumber }
             saveError = error.localizedDescription
         }
     }

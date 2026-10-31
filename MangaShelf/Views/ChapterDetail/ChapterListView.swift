@@ -16,7 +16,6 @@ struct ChapterListView: View {
     let book: Book
 
     @State private var showEnglish = true
-    @State private var hasEnglishFolder = false
     @State private var showReader = false
     @State private var isSyncing = false
     @State private var coverImage: UIImage?
@@ -41,6 +40,11 @@ struct ChapterListView: View {
     @State private var renameText = ""
     @State private var renameErrorMessage: String?
     @FocusState private var isRenameFieldFocused: Bool
+
+    init(book: Book) {
+        self.book = book
+        _showEnglish = State(initialValue: (book.chapters ?? []).contains { $0.isEnglish })
+    }
 
     private struct ArtViewerItem: Identifiable {
         let id = UUID()
@@ -75,7 +79,7 @@ struct ChapterListView: View {
                     .padding(.top, 24)
 
                 chapterList
-                    .padding(.top, 8)
+                    .padding(.top, 16)
                     .padding(.bottom, 40)
             }
         }
@@ -445,9 +449,8 @@ struct ChapterListView: View {
 
     private var seriesInfoBox: some View {
         VStack(spacing: 10) {
-            bookLinkRow(.series)
-            bookLinkRow(.latestChapter)
-            bookLinkRow(.englishSeries)
+            bookLinkRow(showEnglish ? .englishSeries : .series)
+            bookLinkRow(showEnglish ? .englishLatestChapter : .latestChapter)
 
             Rectangle()
                 .fill(Color.white.opacity(0.04))
@@ -515,9 +518,9 @@ struct ChapterListView: View {
                 .frame(width: 28)
             Button {
                 guard let url else { editingLink = kind; return }
-                captureURL = CaptureLink(url: url, isEnglish: kind == .englishSeries)
+                captureURL = CaptureLink(url: url, isEnglish: kind.isEnglish)
             } label: {
-                Text(url == nil ? kind.addLabel : (kind == .englishSeries ? "\(englishChapterLabel(url)) - EN" : (kind == .series ? book.title : "Chapter \(book.latestChapterNumber ?? "#")")))
+                Text(url == nil ? kind.addLabel : (kind.isLatestChapter ? "Chapter \(book[keyPath: kind.numberKeyPath] ?? inferredChapterNumber(url))" : book.title))
                     .font(.subheadline)
                     .foregroundColor(url == nil ? .tertiaryText : theme.accent)
                     .lineLimit(2)
@@ -543,10 +546,9 @@ struct ChapterListView: View {
         }
     }
 
-    /// The EN link has no stored chapter number, so infer it from the URL ("Chapter #" when it can't be read).
-    private func englishChapterLabel(_ url: URL?) -> String {
+    private func inferredChapterNumber(_ url: URL?) -> String {
         let suggestion = CaptureFileName.chapterSuggestion(url: url, title: nil)
-        return suggestion == "Chapter" ? "Chapter #" : suggestion
+        return suggestion == "Chapter" ? "#" : String(suggestion.dropFirst("Chapter ".count))
     }
 
     // MARK: - Chapters Header
@@ -560,32 +562,59 @@ struct ChapterListView: View {
     }
 
     private var chaptersHeader: some View {
-        HStack {
-            Text("Chapters")
+        HStack(spacing: 12) {
+            Label("Chapters", systemImage: "list.bullet")
                 .font(.headline)
                 .foregroundColor(.white)
-            Picker("Chapter language", selection: $showEnglish) {
-                Text("VN").tag(false)
-                Text("EN").tag(true)
+                .fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 0) {
+                languageButton("VN", english: false)
+                languageButton("EN", english: true)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 110)
-            .disabled(!hasEnglishFolder || isSyncing)
-            .accessibilityHint(hasEnglishFolder ? "Switch chapter language" : "EN folder is unavailable")
+            .padding(.horizontal, 2)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(theme.cardBackground)
+                    .frame(height: 32)
+            }
+            .disabled(isSyncing)
             Spacer()
             Button {
                 sortAscending.toggle()
             } label: {
                 HStack(spacing: 4) {
                     Text(sortAscending ? "Oldest" : "Newest")
-                        .font(.subheadline)
                     Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                        .font(.caption)
                 }
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(theme.accent)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
         }
+        .buttonStyle(.plain)
         .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+    }
+
+    private func languageButton(_ title: String, english: Bool) -> some View {
+        let selected = showEnglish == english
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) { showEnglish = english }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(selected ? theme.accent : .secondary)
+                .frame(width: 44, height: 28)
+                .background(
+                    selected ? theme.accent.opacity(0.22) : .clear,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(english ? "English" : "Vietnamese")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - Chapter List
@@ -670,8 +699,11 @@ struct ChapterListView: View {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            hasEnglishFolder = try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext)
-            if !hasEnglishFolder { showEnglish = false }
+            _ = try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext)
+            let chapters = book.chapters ?? []
+            let hasEnglish = chapters.contains { $0.isEnglish }
+            let hasVietnamese = chapters.contains { !$0.isEnglish }
+            if hasEnglish != hasVietnamese { showEnglish = hasEnglish }
         } catch {
             print("Failed to sync chapters: \(error.localizedDescription)")
         }

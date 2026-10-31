@@ -8,7 +8,29 @@ import time
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/challenge':
+        if self.path.startswith('/updates/'):
+            verified = 'fixture_verified=yes' in self.headers.get('Cookie', '')
+            body = '<a href="chapter-42/">Chapter 42</a>'
+            challenge = False
+            if not verified:
+                challenge = self.path.endswith(('/one/', '?retry'))
+                if self.path.endswith('/one/'):
+                    body = "<script>setTimeout(() => location.search='wait', 900)</script>"
+                elif self.path.endswith('?wait'):
+                    body = "<script>setTimeout(() => location.search='retry', 900)</script>"
+                elif self.path.endswith('?retry'):
+                    body = "<script>setTimeout(() => location.search='done', 900)</script>"
+                elif self.path.endswith('/two/'):
+                    body = 'Missing session cookie'
+            self.send_response(403 if challenge else 200)
+            self.send_header('Content-Type', 'text/html')
+            if challenge:
+                self.send_header('cf-mitigated', 'challenge')
+            if self.path.endswith('?done'):
+                self.send_header('Set-Cookie', 'fixture_verified=yes; Path=/updates/')
+            self.end_headers()
+            self.wfile.write(body.encode())
+        elif self.path == '/challenge':
             data = b'''<html><head><title>Verification fixture</title></head><body>Complete verification
 <script>
 window.verificationFrames = [];

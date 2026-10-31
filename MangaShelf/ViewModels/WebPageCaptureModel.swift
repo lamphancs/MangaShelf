@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 @Observable
-final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
+final class WebPageCaptureModel: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
     var document: WebCaptureDocument?
     private(set) var captureViewportHeight: CGFloat?
@@ -11,6 +11,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
     var nextChapterURL: URL?
     var isLoading = true
     var canCapture = false
+    private(set) var mainResponseStatus: Int?
     var isVerificationRequired = false
     var captureWarning: String?
     var isCapturing = false
@@ -36,12 +37,16 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
         )
     }
 
-    init(isPrivate: Bool = true) {
+    convenience init(isPrivate: Bool = true) {
+        self.init(dataStore: isPrivate ? .nonPersistent() : .default())
+    }
+
+    init(dataStore: WKWebsiteDataStore) {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         // Retain normal browsing sessions, including legitimate verification cookies.
         // Secret Library sessions remain isolated and are discarded on close.
-        configuration.websiteDataStore = isPrivate ? .nonPersistent() : .default()
+        configuration.websiteDataStore = dataStore
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
@@ -127,6 +132,7 @@ final class WebPageCaptureModel: NSObject, WKNavigationDelegate, WKUIDelegate {
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse {
+            mainResponseStatus = response.statusCode
             isVerificationRequired = response.value(forHTTPHeaderField: "cf-mitigated")?.lowercased() == "challenge"
             if isVerificationRequired {
                 canCapture = false

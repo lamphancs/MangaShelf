@@ -77,6 +77,8 @@ final class Book {
 
     /// URL of the English version of the series.
     var englishSeriesURL: String? = nil
+    var englishLatestChapterURL: String? = nil
+    var englishLatestChapterNumber: String? = nil
 
     /// Latest online chapter, independent of downloaded reading progress.
     var latestChapterURL: String? = nil
@@ -127,6 +129,16 @@ final class Book {
         self.folderName = folderName
         self.currentChapterIndex = currentChapterIndex
         self.bookmarkData = bookmarkData
+    }
+
+    func migrateEnglishLinks() {
+        var homepage = englishSeriesURL
+        var latest = englishLatestChapterURL
+        var number = englishLatestChapterNumber
+        SeriesLinks.migrateEnglish(homepage: &homepage, latest: &latest, number: &number)
+        englishSeriesURL = homepage
+        englishLatestChapterURL = latest
+        englishLatestChapterNumber = number
     }
 
     /// Chapters sorted by natural file order

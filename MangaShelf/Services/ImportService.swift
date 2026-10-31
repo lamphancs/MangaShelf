@@ -260,7 +260,8 @@ final class ImportService {
         }
         let previousURL = book.latestChapterURL
         let previousNumber = book.latestChapterNumber
-        let previousEnglishURL = book.englishSeriesURL
+        let previousEnglishURL = book.englishLatestChapterURL
+        let previousEnglishNumber = book.englishLatestChapterNumber
         do {
             try await syncChapters(book, folderURL: seriesFolderURL, modelContext: modelContext)
             let chapters = book.sortedChapters
@@ -275,7 +276,11 @@ final class ImportService {
             book.folderSignature = folderSignature(at: seriesFolderURL)
             if let sourceURL, ["http", "https"].contains(sourceURL.scheme?.lowercased() ?? ""), sourceURL.host != nil {
                 if isEnglish {
-                    book.englishSeriesURL = sourceURL.absoluteString
+                    let suggestion = CaptureFileName.chapterSuggestion(url: sourceURL, title: chapterTitle)
+                    let fallback = CaptureFileName.chapterSuggestion(url: nil, title: filename)
+                    let label = suggestion == "Chapter" ? fallback : suggestion
+                    book.englishLatestChapterURL = sourceURL.absoluteString
+                    book.englishLatestChapterNumber = label == "Chapter" ? nil : String(label.dropFirst("Chapter ".count))
                 } else {
                     let suggestion = CaptureFileName.chapterSuggestion(url: sourceURL, title: chapterTitle)
                     let fallback = CaptureFileName.chapterSuggestion(url: nil, title: filename)
@@ -289,7 +294,8 @@ final class ImportService {
         } catch {
             book.latestChapterURL = previousURL
             book.latestChapterNumber = previousNumber
-            book.englishSeriesURL = previousEnglishURL
+            book.englishLatestChapterURL = previousEnglishURL
+            book.englishLatestChapterNumber = previousEnglishNumber
             throw NSError(domain: "WebCapture", code: 2, userInfo: [NSLocalizedDescriptionKey:
                 "The PDF was saved as \(target.lastPathComponent), but the chapter list could not be refreshed. Reopen the series or rescan in Settings. \(error.localizedDescription)"])
         }
@@ -548,6 +554,8 @@ final class ImportService {
             book.seriesNote = seriesData.note
             book.seriesURL = seriesData.url
             book.englishSeriesURL = seriesData.englishSeriesURL
+            book.englishLatestChapterURL = seriesData.englishLatestChapterURL
+            book.englishLatestChapterNumber = seriesData.englishLatestChapterNumber
             book.latestChapterURL = seriesData.latestChapterURL
             book.latestChapterNumber = seriesData.latestChapterNumber
             if seriesData.currentChapterIndex > 0 {

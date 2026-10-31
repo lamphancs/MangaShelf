@@ -12,6 +12,7 @@ struct BookCardView: View {
     @Environment(ThemeManager.self) private var theme
 
     let book: Book
+    var hasUpdate = false
     let onTap: () -> Void
     let onRename: () -> Void
     let onSetCover: () -> Void
@@ -51,6 +52,9 @@ struct BookCardView: View {
         )
         .compositingGroup()
         .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+        .overlay(alignment: .topTrailing) {
+            if hasUpdate { NewChapterBadge().padding(6) }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             UIImpactFeedbackGenerator.impact(.light)
@@ -129,4 +133,27 @@ struct BookCardView: View {
     .padding()
     .environment(ThemeManager())
     .preferredColorScheme(.dark)
+}
+
+struct NewChapterBadge: View {
+    @Environment(ThemeManager.self) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dimmed = false
+
+    var body: some View {
+        Text("NEW")
+            .font(.caption.bold())
+            .foregroundStyle(theme.accent)
+            .opacity(dimmed && !reduceMotion ? 0.45 : 1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(theme.cardBackground, in: Capsule())
+            .onAppear {
+                if !reduceMotion {
+                    withAnimation(.easeInOut(duration: 0.9).repeatForever()) { dimmed = true }
+                }
+            }
+            .accessibilityLabel("New chapter available")
+            .allowsHitTesting(false)
+    }
 }

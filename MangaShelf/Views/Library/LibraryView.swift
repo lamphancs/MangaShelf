@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import WebKit
 
 struct LibraryView: View {
 
@@ -19,6 +20,10 @@ struct LibraryView: View {
     @State private var viewModel: LibraryViewModel
     @State private var selectedBook: Book?
     @State private var navigationPath = NavigationPath()
+    @State private var verificationBrowser: WebPageCaptureModel?
+    @State private var checkID: UUID?
+    @State private var onlineChapters: [URL: Double] = [:]
+    @State private var checkMessage: String?
     @State private var showSettings = false
     @State private var showAddSeries = false
     @State private var newlyCreatedBook: Book?
@@ -65,6 +70,7 @@ struct LibraryView: View {
                                 ForEach(filteredBooks) { book in
                                     BookCardView(
                                         book: book,
+                                        hasUpdate: hasUpdate(book),
                                         onTap: {
                                             if book.isSeries {
                                                 navigationPath.append(book.id)
@@ -92,6 +98,7 @@ struct LibraryView: View {
                                 ForEach(filteredBooks) { book in
                                     BookRowView(
                                         book: book,
+                                        hasUpdate: hasUpdate(book),
                                         onTap: {
                                             if book.isSeries {
                                                 navigationPath.append(book.id)
@@ -145,6 +152,21 @@ struct LibraryView: View {
                     if !filteredBooks.isEmpty {
                         SortMenuView(selectedOption: $viewModel.sortOption)
                     }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        checkID = UUID()
+                    } label: {
+                        if checkID != nil {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .tint(theme.accent)
+                    .disabled(checkID != nil)
+                    .accessibilityLabel("Check for new chapters")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -250,6 +272,34 @@ struct LibraryView: View {
                 }
             }
         }
+        .sheet(item: $verificationBrowser) { browser in
+            NavigationStack {
+                CaptureWebView(webView: browser.webView)
+                    .navigationTitle("Verify on ToonGod")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        Button("Cancel Check") {
+                            checkID = nil
+                            verificationBrowser = nil
+                        }
+                    }
+            }
+            .interactiveDismissDisabled()
+        }
+        .task(id: checkID) {
+            if checkID != nil { await checkForUpdates() }
+        }
+        .onChange(of: viewModel.isSecretMode) {
+            checkID = nil
+            checkMessage = nil
+            verificationBrowser = nil
+            onlineChapters = [:]
+        }
+        .alert("Chapter Check", isPresented: Binding(get: { checkMessage != nil }, set: { if !$0 { checkMessage = nil } })) {
+            Button("OK") { checkMessage = nil }
+        } message: {
+            Text(checkMessage ?? "")
+        }
         .task {
             await viewModel.quickRefresh(modelContext: modelContext)
         }
@@ -259,6 +309,88 @@ struct LibraryView: View {
             if newPhase == .active {
                 Task { await viewModel.quickRefresh(modelContext: modelContext) }
             }
+        }
+    }
+
+    private func sources(_ book: Book) -> [(page: URL, english: Bool)] {
+        guard book.isSeries else { return [] }
+        return [(book.seriesURL, book.latestChapterURL, false),
+                (book.englishSeriesURL, book.englishLatestChapterURL, true)].compactMap { homepage, latest, english in
+            let page = [homepage, latest].compactMap { value -> URL? in
+                guard let value, let url = BookLinkKind.webURL(value) else { return nil }
+                return ChapterUpdateSource.seriesPage(url)
+            }.first
+            guard let page else { return nil }
+            return (page, english)
+        }
+    }
+
+    private func localLatest(_ book: Book, english: Bool) -> Double? {
+        let chapters = (book.chapters ?? []).filter { $0.isEnglish == english }
+        if chapters.isEmpty { return -1 }
+        let numbers = chapters.compactMap { chapter in
+            ChapterUpdateSource.chapterNumber(chapter.displayName) ?? chapter.chapterNumber
+        }
+        return numbers.max()
+    }
+
+    private func hasUpdate(_ book: Book) -> Bool {
+        sources(book).contains { source in
+            guard let latest = onlineChapters[source.page],
+                  let local = localLatest(book, english: source.english) else { return false }
+            return latest > local
+        }
+    }
+
+    private func checkForUpdates() async {
+        let shelf = books.filter { $0.isSecret == viewModel.isSecretMode && $0.isAvailable && $0.isSeries }
+        let pages = Set(shelf.flatMap { sources($0).map(\.page) })
+        var failures: [URL: String] = [:]
+        let dataStore: WKWebsiteDataStore = viewModel.isSecretMode ? .nonPersistent() : .default()
+        var presentedVerification = false
+        for page in pages {
+            var requestedVerification = false
+            do {
+                let latest = try await ChapterUpdateSource.fetch(page, dataStore: dataStore) { browser in
+                    requestedVerification = true
+                    guard !presentedVerification else {
+                        throw ChapterUpdateSource.CheckError(message: "ToonGod requested verification again. The check has stopped.")
+                    }
+                    presentedVerification = true
+                    verificationBrowser = browser
+                }
+                guard !Task.isCancelled else { return }
+                verificationBrowser = nil
+                onlineChapters[page] = latest
+            } catch {
+                guard !Task.isCancelled else { return }
+                if requestedVerification {
+                    verificationBrowser = nil
+                    checkID = nil
+                    checkMessage = error.localizedDescription
+                    return
+                }
+                failures[page] = error.localizedDescription
+            }
+        }
+        guard !Task.isCancelled else { return }
+        checkID = nil
+        let issues = shelf.flatMap { book in
+            sources(book).compactMap { source -> String? in
+                let label = source.english ? "\(book.title) (EN)" : book.title
+                if let message = failures[source.page] { return "\(label) — \(message)" }
+                if localLatest(book, english: source.english) == nil {
+                    return "\(label) — No numbered PDF found. Include the chapter number in a filename."
+                }
+                return nil
+            }
+        }
+        if pages.isEmpty {
+            checkMessage = "Add a ToonGod series link in Info to check for new chapters."
+        } else if !issues.isEmpty {
+            checkMessage = issues.joined(separator: "\n\n")
+        } else if !shelf.contains(where: hasUpdate) {
+            checkMessage = "No new chapters found on the checked sources."
         }
     }
 

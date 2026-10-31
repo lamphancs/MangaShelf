@@ -10,6 +10,7 @@ struct BookRowView: View {
     @Environment(ThemeManager.self) private var theme
 
     let book: Book
+    var hasUpdate = false
     let onTap: () -> Void
     let onRename: () -> Void
     let onSetCover: () -> Void
@@ -50,6 +51,9 @@ struct BookRowView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(theme.cardBorder, lineWidth: 1)
         )
+        .overlay(alignment: .topTrailing) {
+            if hasUpdate { NewChapterBadge().padding(6) }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             UIImpactFeedbackGenerator.impact(.light)
