@@ -16,6 +16,10 @@ struct WebPageCaptureView: View {
     @ScaledMetric(relativeTo: .body) private var browserSideWidth = 56
     @State private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var overview = true
+    @State private var cropPreviewWidth: CGFloat = 0
+    @State private var showComparison = false
+    @State private var referenceFilename = ""
+    @State private var lastSavedFilename: String?
     @State private var isExporting = false
     @State private var exportTask: Task<Void, Never>?
     @State private var sharedFile: CaptureShareFile?
@@ -56,8 +60,7 @@ struct WebPageCaptureView: View {
                     CaptureWebView(webView: model.webView)
                         .allowsHitTesting(!model.isCapturing && model.document == nil)
                     if let document = model.document {
-                        FullPageCropView(document: document, crop: $crop, overview: overview,
-                                         trimPageHeight: model.captureViewportHeight)
+                        comparisonCanvas(document: document)
                             .background(theme.libraryBackground)
                             .allowsHitTesting(!isExporting)
                     }
@@ -114,6 +117,11 @@ struct WebPageCaptureView: View {
                     if model.document == nil {
                         shareLinkMenu
                     } else {
+                        Button { showComparison.toggle() } label: {
+                            Label("Compare", systemImage: "rectangle.split.2x1")
+                        }
+                        .disabled(referenceChapters.isEmpty || isExporting)
+                        .accessibilityLabel(showComparison ? "Hide chapter comparison" : "Compare with saved chapter")
                         Button("Back to Page") {
                             model.returnToPage()
                             resetPreview()
@@ -135,6 +143,7 @@ struct WebPageCaptureView: View {
             if ready {
                 resetPreview()
                 crop = model.defaultCrop
+                selectReferenceChapter()
             }
         }
         .onDisappear {
@@ -173,6 +182,72 @@ struct WebPageCaptureView: View {
         }
         .sheet(item: $sharedFile, onDismiss: removeTemporaryFile) { file in
             CaptureShareSheet(url: file.url)
+        }
+    }
+
+    private var referenceChapters: [Chapter] {
+        book.sortedChapters.filter { $0.isEnglish == isEnglish }
+    }
+
+    private func selectReferenceChapter() {
+        if let lastSavedFilename {
+            referenceFilename = lastSavedFilename
+            return
+        }
+        let number = model.suggestedFilename.matches(of: /\d+(?:\.\d+)?/).last
+            .flatMap { Double($0.output) }
+        referenceFilename = referenceChapters.last { chapter in
+            guard let number, let candidate = chapter.chapterNumber else { return false }
+            return candidate < number
+        }?.filename ?? referenceChapters.last?.filename ?? ""
+    }
+
+    private func comparisonCanvas(document: WebCaptureDocument) -> some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if showComparison {
+                    VStack(spacing: 0) {
+                        Menu {
+                            Picker("Reference chapter", selection: $referenceFilename) {
+                                ForEach(referenceChapters) { chapter in
+                                    Text(chapter.displayName).tag(chapter.filename)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(referenceChapters.first { $0.filename == referenceFilename }?.displayName ?? "Chapter")
+                                    .font(.caption2.weight(.medium))
+                                    .minimumScaleFactor(0.85)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .accessibilityHidden(true)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(theme.accent)
+                        .background(theme.cardBackground)
+                        .accessibilityLabel("Reference chapter")
+                        .accessibilityValue(referenceChapters.first { $0.filename == referenceFilename }?.displayName ?? "Chapter")
+                        ChapterReferenceView(bookmarkKey: book.bookmarkKey,
+                                             folderName: book.folderName,
+                                             filename: referenceFilename,
+                                             initialContentWidth: cropPreviewWidth / 2)
+                            .id(referenceFilename)
+                    }
+                    .frame(width: geometry.size.width * 0.25)
+                    .clipped()
+                    Divider()
+                }
+                FullPageCropView(document: document, crop: $crop, overview: overview,
+                                 trimPageHeight: model.captureViewportHeight,
+                                 onPreviewWidthChange: { cropPreviewWidth = $0 })
+            }
         }
     }
 
@@ -501,6 +576,7 @@ struct WebPageCaptureView: View {
                 if saveToSeries {
                     let target = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: sourceURL, chapterTitle: chapterTitle, isEnglish: isEnglish, modelContext: modelContext)
                     savedDescription = "\(isEnglish ? "EN/" : "")\(target.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
+                    lastSavedFilename = (isEnglish ? "EN/" : "") + target.lastPathComponent
                     saved = true
                     showSaveSuccess = true
                     UINotificationFeedbackGenerator().notificationOccurred(.success)

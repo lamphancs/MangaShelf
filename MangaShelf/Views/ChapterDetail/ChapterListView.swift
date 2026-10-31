@@ -15,7 +15,7 @@ struct ChapterListView: View {
     @Environment(ThemeManager.self) private var theme
     let book: Book
 
-    @State private var showEnglish = false
+    @State private var showEnglish = true
     @State private var hasEnglishFolder = false
     @State private var showReader = false
     @State private var isSyncing = false

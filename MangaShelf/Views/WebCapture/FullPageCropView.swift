@@ -7,6 +7,7 @@ struct FullPageCropView: View {
     @Binding var crop: CGRect
     let overview: Bool
     let trimPageHeight: CGFloat?
+    var onPreviewWidthChange: ((CGFloat) -> Void)?
     @State private var initialViewportHeight: CGFloat?
     @Environment(ThemeManager.self) private var theme
     @AppStorage(StorageKey.captureOverviewZoom) private var overviewZoom = CaptureCrop.defaultOverviewZoom
@@ -18,7 +19,8 @@ struct FullPageCropView: View {
     @State private var thumbnailPosition = ScrollPosition(edge: .top)
     @State private var thumbnailViewport: CGRect = .zero
 
-    init(document: WebCaptureDocument, crop: Binding<CGRect>, overview: Bool, trimPageHeight: CGFloat? = nil, renderer: CapturePDFTileRenderer? = nil) {
+    init(document: WebCaptureDocument, crop: Binding<CGRect>, overview: Bool, trimPageHeight: CGFloat? = nil, renderer: CapturePDFTileRenderer? = nil, onPreviewWidthChange: ((CGFloat) -> Void)? = nil) {
+        self.onPreviewWidthChange = onPreviewWidthChange
         self.document = document
         self._crop = crop
         self.overview = overview
@@ -56,6 +58,9 @@ struct FullPageCropView: View {
                     .padding(.leading, 24)
                     .padding(.trailing, 80)
                     .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+            }
+            .onChange(of: width, initial: true) { _, width in
+                onPreviewWidthChange?(width)
             }
             .onAppear {
                 if initialViewportHeight == nil { initialViewportHeight = geometry.size.height }

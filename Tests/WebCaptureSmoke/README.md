@@ -79,3 +79,26 @@ Thumbnail focus follows the last trim control used: on a long PDF press bottom +
 Thumbnail viewport centering: the white visible-region outline stays vertically centered in the rail while scrolling the main canvas or using either trim control or Go to top/bottom. Half-viewport padding keeps this true at the document start/end and for short PDFs. Verify thumbnail tap navigation and 64% vertical compression remain aligned.
 
 Overlay-only editable crop: crop an existing chapter, reopen from the overlay, and verify hidden portions of retained pages appear shaded outside the previous selection. Expand or use Full Chapter and save. Reader and screenshot capture should show only the new CropBox. Whole pages removed earlier cannot be recovered. Web capture export/save must not create crop-source backups or change its output behavior. Older PDFs whose MediaBox was already reduced cannot reveal content outside those lost bounds automatically.
+
+Chapter comparison: capture a series chapter and tap Compare in the crop toolbar.
+The reference picker contains saved chapters in the current VN/EN language only;
+it defaults to the preceding numbered chapter (or the last saved chapter when
+continuing a capture session). Verify that the reference opens at the bottom,
+including a one-page tall web PDF, and supports independent scrolling and pinch
+zoom while crop handles and trim buttons remain usable. Select another reference,
+close/reopen Compare, and rotate between portrait and landscape (both side
+by side, reference uses 25% of the width). On opening each reference, its content
+width should be half the current crop preview content width and its final content
+should be visible, including tall one-page PDFs and rotated pages. Subsequent crop
+adjustments must preserve manual reference scrolling and zoom. References must respect existing CropBox trims. Save and advance to the
+next chapter: the just-saved PDF becomes the reference. With no saved chapters,
+Compare is disabled; unavailable files show an inline error and allow another
+selection. Saving the current crop must not alter the reference PDF.
+
+Reference chapter header: use caption-sized medium text, leading-aligned with
+8-point horizontal padding and a separate trailing chevron. Keep the tap target
+44 points high. Check a normal chapter label and a long title in the 25%-width
+column: long text truncates in the middle without pushing the chevron outside the
+pane; VoiceOver retains the full selected chapter name. Visual verification on
+an iPhone 17e / iOS 27 simulator uses an isolated copy of the capture screen with
+synthetic tall PDFs, avoiding any real series data.
