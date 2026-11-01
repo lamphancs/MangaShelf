@@ -89,9 +89,8 @@ nonisolated struct WebCaptureDocument: Sendable {
         try exportResult(crop: crop).data
     }
 
-    /// Repair image joins only within the byte budget of the existing native export.
-    /// Stronger lossless compression funds the small repair bands without enlarging
-    /// the file or recompressing the chapter's JPEG images.
+    /// Repair image joins using the existing size allowance and lossless compression.
+    /// Original JPEG streams remain intact; optional repair bands are size-checked.
     func exportResult(crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> PDFSeamRepair.Result {
         try PDFSeamRepair.export(nativeExportPDF(crop: crop))
     }
@@ -217,7 +216,7 @@ nonisolated struct WebCaptureDocument: Sendable {
 }
 
 nonisolated enum WebCaptureError: LocalizedError {
-    case invalidDocument, unavailableFolder, pageTooLong, loadingLimit, operationTimedOut, invalidFilename
+    case invalidDocument, unavailableFolder, operationTimedOut, invalidFilename
 
     var errorDescription: String? {
         switch self {
@@ -225,8 +224,6 @@ nonisolated enum WebCaptureError: LocalizedError {
         case .operationTimedOut: "WebKit did not finish the capture operation. Reload the page and try again."
         case .invalidDocument: "WebKit returned an unreadable PDF or invalid page dimensions. Reload the page and try again."
         case .unavailableFolder: "The series folder is unavailable. Reconnect it in Settings, or use Share PDF to save the document."
-        case .pageTooLong: "This page is too large to capture safely. Open a shorter page and try again."
-        case .loadingLimit: "This page keeps growing or is taking too long to load. Wait for the page to finish loading, then try Capture again."
         }
     }
 }

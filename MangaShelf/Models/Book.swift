@@ -149,14 +149,17 @@ final class Book {
     /// Reading progress as a percentage (0.0 to 1.0)
     var readingProgress: Double {
         if isSeries {
-            let allChapters = sortedChapters
-            guard let current = allChapters[safe: currentChapterIndex] else { return 0.0 }
-            let languageChapters = allChapters.filter { $0.isEnglish == current.isEnglish }
-            let index = languageChapters.firstIndex { $0.id == current.id } ?? 0
-            return Double(index) / Double(languageChapters.count)
+            return seriesProgress(in: sortedChapters)
         }
         guard totalPages > 0 else { return 0.0 }
         return Double(lastReadPage) / Double(totalPages)
+    }
+
+    func seriesProgress(in allChapters: [Chapter]) -> Double {
+        guard let current = allChapters[safe: currentChapterIndex] else { return 0.0 }
+        let languageChapters = allChapters.filter { $0.isEnglish == current.isEnglish }
+        let index = languageChapters.firstIndex { $0.id == current.id } ?? 0
+        return Double(index) / Double(languageChapters.count)
     }
 
     /// Sorted bookmarks by chapter index
@@ -169,16 +172,16 @@ final class Book {
         isSecret ? StorageKey.secretFolderBookmark : StorageKey.rootFolderBookmark
     }
 
+    private static let thumbnailDirectory = URL.applicationSupportDirectory.appendingPathComponent("Thumbnails", isDirectory: true)
+
     /// Get the actual thumbnail URL (dynamically constructed)
     var thumbnailURL: URL? {
         guard let thumbnailPath = thumbnailPath else { return nil }
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let thumbnailDir = appSupport.appendingPathComponent("Thumbnails", isDirectory: true)
         if !thumbnailPath.contains("/") {
-            return thumbnailDir.appendingPathComponent(thumbnailPath)
+            return Self.thumbnailDirectory.appendingPathComponent(thumbnailPath)
         }
         let filename = URL(fileURLWithPath: thumbnailPath).lastPathComponent
-        return thumbnailDir.appendingPathComponent(filename)
+        return Self.thumbnailDirectory.appendingPathComponent(filename)
     }
 
 }

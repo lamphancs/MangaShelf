@@ -33,10 +33,6 @@ final class LibraryViewModel {
     var isSecretMode = false {
         didSet { invalidateCache() }
     }
-    /// Full-screen blocking spinner. Reserved for user-initiated full rescans where
-    /// the library state may change drastically. Auto-refreshes on launch / scene-active
-    /// transitions never set this — they use `isRefreshing` instead.
-    var isLoading = false
     /// Subtle inline indicator for background reconciliation. The library remains
     /// fully interactive while this is `true`.
     var isRefreshing = false
@@ -100,29 +96,16 @@ final class LibraryViewModel {
     /// rendered from SwiftData throughout — this method only flips `isRefreshing` so an
     /// inline indicator can appear in the toolbar.
     func quickRefresh(modelContext: ModelContext) async {
-        await performScan(modelContext: modelContext, force: false, blocking: false)
+        await performScan(modelContext: modelContext)
     }
 
-    /// User-initiated full rescan (Settings → Rescan, new folder pick). Ignores
-    /// signatures so every series folder is re-walked. Uses the blocking spinner because
-    /// row counts may change visibly.
-    func fullRescan(modelContext: ModelContext) async {
-        await performScan(modelContext: modelContext, force: true, blocking: true)
-    }
-
-    private func performScan(modelContext: ModelContext, force: Bool, blocking: Bool) async {
+    private func performScan(modelContext: ModelContext) async {
         let hasRoot = UserDefaults.standard.data(forKey: StorageKey.rootFolderBookmark) != nil
         let hasSecret = UserDefaults.standard.data(forKey: StorageKey.secretFolderBookmark) != nil
-        guard hasRoot || hasSecret else { return }
+        guard !isRefreshing, hasRoot || hasSecret else { return }
 
-        if blocking {
-            isLoading = true
-        } else {
-            isRefreshing = true
-        }
-        defer {
-            if blocking { isLoading = false } else { isRefreshing = false }
-        }
+        isRefreshing = true
+        defer { isRefreshing = false }
 
         // Move all app-side per-series state into each folder's `.mangashelf/` before
         // the scan can start deleting missing books. Idempotent across launches.
@@ -130,10 +113,10 @@ final class LibraryViewModel {
 
         do {
             if hasRoot {
-                try await importService.scanRootFolder(modelContext: modelContext, force: force)
+                try await importService.scanRootFolder(modelContext: modelContext, force: false)
             }
             if hasSecret {
-                try await importService.scanSecretFolder(modelContext: modelContext, force: force)
+                try await importService.scanSecretFolder(modelContext: modelContext, force: false)
             }
         } catch {
             errorMessage = error.localizedDescription

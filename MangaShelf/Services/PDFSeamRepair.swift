@@ -175,11 +175,7 @@ nonisolated enum PDFSeamRepair {
                     let v = ImageJoins.get(info)
                     v.lastFill = !v.complexPath && !v.clipsPath
                         ? v.path.map { (rect: $0, clip: v.state.clip) } : nil
-                    if v.clipsPath {
-                        v.state.clip = !v.complexPath && v.path != nil
-                            ? v.state.clip.intersection(v.path!) : .null
-                    }
-                    v.path = nil; v.complexPath = false; v.clipsPath = false
+                    v.finishPath()
                 })
             }
             for operation in ["BT", "gs", "sh", "BI"] {
@@ -191,11 +187,7 @@ nonisolated enum PDFSeamRepair {
             for operation in ["n", "S", "s", "B", "B*", "b", "b*"] {
                 CGPDFOperatorTableSetCallback(table, operation, { _, info in
                     let v = ImageJoins.get(info)
-                    if v.clipsPath {
-                        v.state.clip = !v.complexPath && v.path != nil
-                            ? v.state.clip.intersection(v.path!) : .null
-                    }
-                    v.path = nil; v.complexPath = false; v.clipsPath = false
+                    v.finishPath()
                 })
             }
             CGPDFOperatorTableSetCallback(table, "Do", { scanner, info in ImageJoins.get(info).image(scanner) })
@@ -203,6 +195,19 @@ nonisolated enum PDFSeamRepair {
             defer { CGPDFScannerRelease(scanner) }
             guard CGPDFScannerScan(scanner), !visitor.invalid, visitor.stack.isEmpty else { return nil }
             return visitor
+        }
+
+        private func finishPath() {
+            if clipsPath {
+                if !complexPath, let path {
+                    state.clip = state.clip.intersection(path)
+                } else {
+                    state.clip = .null
+                }
+            }
+            path = nil
+            complexPath = false
+            clipsPath = false
         }
 
         private static func get(_ context: UnsafeMutableRawPointer?) -> ImageJoins {

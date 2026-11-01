@@ -283,7 +283,7 @@ struct CaptureSmokeView: View {
                 let compact = try await Task.detached { try document.exportPDF() }.value
                 try compact.write(to: folder.appendingPathComponent("bottom.pdf"))
                 let images = try await model.webView.evaluateJavaScript("JSON.stringify(Array.from(document.images).map(i=>({src:i.currentSrc,w:i.naturalWidth,h:i.naturalHeight,complete:i.complete})))")
-                write("LIVE: title=\(model.webView.title ?? "") size=\(document.size) original=\(document.data.count) exported=\(compact.count) warning=\(model.captureWarning ?? "none")\n\(images)")
+                write("LIVE: title=\(model.webView.title ?? "") size=\(document.size) original=\(document.data.count) exported=\(compact.count) warning=\(model.captureWarning ?? "none")\n\(String(describing: images))")
             } catch { write("FAIL: Live capture: \(error)") }
             return
         }
@@ -519,7 +519,8 @@ struct CaptureSmokeView: View {
         check(joined.pageCount == 1 && joined.size == document.size, "Large PDF joins into one 140000-point page")
         let optimizedData = try document.exportPDF()
         let optimizedDocument = try WebCaptureDocument(data: optimizedData)
-        check(optimizedData.count <= joinedData.count, "Large export never grows after optimization (\(data.count) → \(optimizedData.count) bytes)")
+        check(optimizedData.count <= joinedData.count + PDFSeamRepair.repairSizeAllowance,
+              "Large export stays within the existing seam-repair allowance (\(joinedData.count) → \(optimizedData.count) bytes)")
         let renderer = CapturePDFTileRenderer(document: document)
         for top: CGFloat in [0, 70_000, 139_500] {
             let image = try await renderer.image(crop: CGRect(x: 0, y: top / document.size.height,

@@ -19,36 +19,52 @@ final class ThumbnailService {
     /// Standard thumbnail size for book covers
     private let thumbnailSize = Layout.coverSize
 
-    private let imageCache = NSCache<NSString, UIImage>()
+    private final class CoverPreview {
+        let image: UIImage
+        let pixels: CGFloat
+        let version: Int
+
+        init(_ image: UIImage, pixels: CGFloat, version: Int) {
+            self.image = image
+            self.pixels = pixels
+            self.version = version
+        }
+    }
+
+    private let imageCache = NSCache<NSString, CoverPreview>()
 
     private init() {
         imageCache.countLimit = 100
         imageCache.totalCostLimit = 50 * 1024 * 1024
     }
 
-    func cachedImage(for url: URL, targetSize: CGSize) async -> UIImage? {
+    func preview(for url: URL, version: Int) -> UIImage? {
+        guard let entry = imageCache.object(forKey: url.absoluteString as NSString),
+              entry.version == version else { return nil }
+        return entry.image
+    }
+
+    func cachedImage(for url: URL, targetSize: CGSize, version: Int) async -> UIImage? {
         let key = url.absoluteString as NSString
-        if let cached = imageCache.object(forKey: key) {
-            return cached
+        let pixels = max(targetSize.width, targetSize.height)
+        if let entry = imageCache.object(forKey: key), entry.version == version, entry.pixels >= pixels {
+            return entry.image
         }
-        let image = await Task.detached(priority: .utility) {
-            guard let data = try? Data(contentsOf: url),
-                  let original = UIImage(data: data) else { return nil as UIImage? }
-            let renderer = UIGraphicsImageRenderer(size: targetSize)
-            return renderer.image { _ in
-                let widthRatio = targetSize.width / original.size.width
-                let heightRatio = targetSize.height / original.size.height
-                let scale = max(widthRatio, heightRatio)
-                let scaledSize = CGSize(width: original.size.width * scale, height: original.size.height * scale)
-                let x = (targetSize.width - scaledSize.width) / 2
-                let y = (targetSize.height - scaledSize.height) / 2
-                original.draw(in: CGRect(origin: CGPoint(x: x, y: y), size: scaledSize))
-            }
-        }.value
-        if let image {
-            imageCache.setObject(image, forKey: key, cost: Int(targetSize.width * targetSize.height * 4))
+        let image = await decodePreview(at: url, maxPixels: pixels)
+        guard !Task.isCancelled, let image else { return nil }
+        if let entry = imageCache.object(forKey: key), entry.version == version, entry.pixels >= pixels {
+            return entry.image
         }
+        let entry = CoverPreview(image, pixels: pixels, version: version)
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        imageCache.setObject(entry, forKey: key, cost: cost)
         return image
+    }
+
+    @concurrent
+    private func decodePreview(at url: URL, maxPixels: CGFloat) async -> UIImage? {
+        guard !Task.isCancelled else { return nil }
+        return ArtItem.downsampledImage(at: url, maxPixelSize: maxPixels)
     }
 
     func evictCachedImage(for url: URL) {

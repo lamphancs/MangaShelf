@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT
 cp -R "$repo_root/MangaShelf" "$repo_root/MangaShelf.xcodeproj" "$repo_root/PROJECT.md" "$work_dir/"
 cp "$repo_root/Tests/ReaderArtworkSmoke/SmokeApp.swift" "$work_dir/MangaShelf/App/MangaShelfApp.swift"
-cat "$repo_root/Tests/ReaderArtworkSmoke/SmokeChecks.swift" >> "$work_dir/MangaShelf/Views/Reader/PDFPageView.swift"
+cat "$repo_root/Tests/ReaderArtworkSmoke/SmokeChecks.swift" >> "$work_dir/MangaShelf/Views/Reader/PDFContentView.swift"
 xcodebuild -project "$work_dir/MangaShelf.xcodeproj" -scheme MangaShelf -sdk iphonesimulator \
     -configuration Debug -destination "platform=iOS Simulator,id=$simulator_id" \
     -derivedDataPath "$work_dir/build" PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \

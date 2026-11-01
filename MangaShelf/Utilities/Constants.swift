@@ -9,6 +9,7 @@ import CoreGraphics
 enum Layout {
     /// Standard pixel size for generated cover thumbnails and cropped custom covers (2:3).
     static let coverSize = CGSize(width: 400, height: 600)
+    static let coverAspectRatio: CGFloat = 2.0 / 3.0
 }
 
 enum StorageKey {
@@ -29,6 +30,9 @@ enum StorageKey {
 }
 
 nonisolated enum CaptureCrop {
+    /// Display-point band heights; preserve preview resolution independently of chapter length.
+    static let previewTileHeight: CGFloat = 384
+    static let thumbnailTileHeight: CGFloat = 192
     /// Browser viewports trimmed from the bottom of a capture by default.
     static let defaultTrimPages = 5
     /// Browser viewports trimmed from the top of a capture by default.

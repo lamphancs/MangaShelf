@@ -41,8 +41,8 @@ struct AddSeriesView: View {
                         Button("Done") { createSeries(browse: false) }
                         Button("Browse") { createSeries(browse: true) }
                     }
-                    .disabled(!draft.linkIsValid)
-                    if !draft.linkIsValid {
+                    .disabled(!draft.isLinkValid)
+                    if !draft.isLinkValid {
                         Text("Enter a valid website address, or leave it empty.")
                             .font(.caption)
                             .foregroundStyle(.red)
@@ -66,7 +66,7 @@ struct AddSeriesView: View {
                              : "Choose the parent folder where your library is stored before continuing.")
                     }
                     Button("Next") { linkStep = true }
-                        .disabled(!draft.detailsAreValid || !folderReady)
+                        .disabled(!draft.hasValidDetails || !folderReady)
                 }
             }
             .scrollContentBackground(.hidden)

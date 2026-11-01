@@ -58,10 +58,13 @@ struct ChapterListView: View {
     }
 
     var body: some View {
-        ScrollView {
+        let sorted = book.sortedChapters
+        let chapters = sorted.filter { $0.isEnglish == showEnglish }
+        let progress = book.seriesProgress(in: sorted)
+        return ScrollView {
             VStack(spacing: 0) {
                 coverHeader
-                infoSection
+                infoSection(count: chapters.count, progress: progress)
                     .padding(.top, 20)
 
                 if showInfoBox {
@@ -71,14 +74,14 @@ struct ChapterListView: View {
                         .transition(.opacity)
                 }
 
-                actionButtons
+                actionButtons(chapters: chapters, progress: progress)
                     .padding(.top, 16)
                     .padding(.horizontal, 20)
 
                 chaptersHeader
                     .padding(.top, 24)
 
-                chapterList
+                chapterList(chapters: chapters, hasProgress: progress > 0)
                     .padding(.top, 16)
                     .padding(.bottom, 40)
             }
@@ -94,11 +97,13 @@ struct ChapterListView: View {
         }) {
             ReaderView(book: book)
         }
+        .task(id: "\(book.thumbnailPath ?? "")-\(book.coverVersion)") {
+            await loadCoverImage()
+        }
         .task {
-            await syncChapters()
+            await syncChapters(skipUnchanged: true)
             await BookDataService.shared.restoreIfNeeded(book: book, modelContext: modelContext)
             await BookDataService.shared.save(book: book)
-            await loadCoverImage()
             await loadArtImages()
         }
         .sheet(isPresented: $showAddBookmark) {
@@ -141,7 +146,12 @@ struct ChapterListView: View {
                     openInReaderAction(forArtFilename: filename)
                 },
                 loadFullImage: { id in
-                    id == "__cover__" ? nil : await loadFullArtImage(filename: id)
+                    if id == "__cover__", let url = book.thumbnailURL {
+                        return await Task.detached(priority: .userInitiated) {
+                            UIImage(contentsOfFile: url.path)
+                        }.value
+                    }
+                    return await loadFullArtImage(filename: id)
                 },
                 onReplaceArt: { filename, image in
                     try await replaceArtImage(filename: filename, image: image)
@@ -324,7 +334,7 @@ struct ChapterListView: View {
 
     // MARK: - Info Section
 
-    private var infoSection: some View {
+    private func infoSection(count: Int, progress: Double) -> some View {
         VStack(spacing: 12) {
             Text(book.title)
                 .font(.title2)
@@ -335,7 +345,7 @@ struct ChapterListView: View {
                 .padding(.horizontal, 32)
 
             HStack(spacing: 6) {
-                Label("\(languageChapters.count) chapters", systemImage: "book.fill")
+                Label("\(count) chapters", systemImage: "book.fill")
                     .font(.subheadline)
                     .foregroundColor(.secondaryText)
 
@@ -351,15 +361,15 @@ struct ChapterListView: View {
                 }
             }
 
-            if book.readingProgress > 0 {
-                progressBar
+            if progress > 0 {
+                progressBar(progress)
                     .padding(.horizontal, 40)
                     .padding(.top, 4)
             }
         }
     }
 
-    private var progressBar: some View {
+    private func progressBar(_ progress: Double) -> some View {
         VStack(spacing: 6) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -369,12 +379,12 @@ struct ChapterListView: View {
 
                     Capsule()
                         .fill(theme.accent)
-                        .frame(width: geo.size.width * book.readingProgress, height: 4)
+                        .frame(width: geo.size.width * progress, height: 4)
                 }
             }
             .frame(height: 4)
 
-            Text("\(Int(book.readingProgress * 100))% complete")
+            Text("\(Int(progress * 100))% complete")
                 .font(.caption)
                 .foregroundColor(.tertiaryText)
         }
@@ -382,10 +392,11 @@ struct ChapterListView: View {
 
     // MARK: - Action Buttons
 
-    private var actionButtons: some View {
-        HStack(spacing: 0) {
+    private func actionButtons(chapters: [Chapter], progress: Double) -> some View {
+        let resumeChapter = chapters.first { $0.sortOrder == book.currentChapterIndex } ?? chapters.first
+        return HStack(spacing: 0) {
             Button {
-                guard let firstChapter = languageChapters.first else { return }
+                guard let firstChapter = chapters.first else { return }
                 book.currentChapterIndex = firstChapter.sortOrder
                 firstChapter.lastReadPage = 0
                 firstChapter.lastReadOffset = 0
@@ -421,7 +432,7 @@ struct ChapterListView: View {
                         .font(.system(size: 16))
                         .foregroundColor(theme.accent)
 
-                    if book.readingProgress > 0,
+                    if progress > 0,
                        let chapter = resumeChapter {
                         Text(chapter.displayName)
                             .font(.caption2)
@@ -439,8 +450,8 @@ struct ChapterListView: View {
                 .padding(.vertical, 14)
             }
         }
-        .disabled(isSyncing || languageChapters.isEmpty)
-        .opacity(languageChapters.isEmpty ? 0.5 : 1)
+        .disabled(isSyncing || chapters.isEmpty)
+        .opacity(chapters.isEmpty ? 0.5 : 1)
         .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -553,14 +564,6 @@ struct ChapterListView: View {
 
     // MARK: - Chapters Header
 
-    private var languageChapters: [Chapter] {
-        book.sortedChapters.filter { $0.isEnglish == showEnglish }
-    }
-
-    private var resumeChapter: Chapter? {
-        languageChapters.first { $0.sortOrder == book.currentChapterIndex } ?? languageChapters.first
-    }
-
     private var chaptersHeader: some View {
         HStack(spacing: 12) {
             Label("Chapters", systemImage: "list.bullet")
@@ -619,8 +622,8 @@ struct ChapterListView: View {
 
     // MARK: - Chapter List
 
-    private var chapterList: some View {
-        let allChapters = languageChapters
+    private func chapterList(chapters allChapters: [Chapter], hasProgress: Bool) -> some View {
+        let bookmarks = Dictionary((book.bookmarks ?? []).map { ($0.chapterIndex, $0) }, uniquingKeysWith: { first, _ in first })
         let displayChapters = sortAscending ? allChapters : allChapters.reversed()
 
         return LazyVStack(spacing: 0) {
@@ -633,58 +636,62 @@ struct ChapterListView: View {
             }
             ForEach(Array(displayChapters.enumerated()), id: \.element.id) { displayIndex, chapter in
                 let originalIndex = chapter.sortOrder
-                if renamingChapterID == chapter.id {
-                    chapterRenameRow(chapter: chapter)
-                } else {
-                    Button {
-                        book.currentChapterIndex = originalIndex
-                        chapter.lastReadPage = 0
-                        chapter.lastReadOffset = 0
-                        try? modelContext.save()
-                        showReader = true
-                    } label: {
-                        chapterRow(chapter: chapter, index: originalIndex)
-                    }
-                    .contextMenu {
+                let number = sortAscending ? displayIndex + 1 : allChapters.count - displayIndex
+                let bookmark = bookmarks[originalIndex]
+                VStack(spacing: 0) {
+                    if renamingChapterID == chapter.id {
+                        chapterRenameRow(chapter: chapter, number: number)
+                    } else {
                         Button {
-                            bookmarkChapterIndex = originalIndex
-                            bookmarkNote = ""
-                            bookmarkColor = .red
-                            showAddBookmark = true
+                            book.currentChapterIndex = originalIndex
+                            chapter.lastReadPage = 0
+                            chapter.lastReadOffset = 0
+                            try? modelContext.save()
+                            showReader = true
                         } label: {
-                            Label("Add Bookmark", systemImage: "bookmark.fill")
+                            chapterRow(chapter: chapter, number: number, isCurrentChapter: hasProgress && originalIndex == book.currentChapterIndex, userBookmark: bookmark)
                         }
-
-                        if let existing = bookmarkFor(index: originalIndex) {
-                            Button(role: .destructive) {
-                                modelContext.delete(existing)
-                                try? modelContext.save()
-                                saveBookData()
+                        .contextMenu {
+                            Button {
+                                bookmarkChapterIndex = originalIndex
+                                bookmarkNote = ""
+                                bookmarkColor = .red
+                                showAddBookmark = true
                             } label: {
-                                Label("Remove Bookmark", systemImage: "bookmark.slash")
+                                Label("Add Bookmark", systemImage: "bookmark.fill")
+                            }
+
+                            if let existing = bookmark {
+                                Button(role: .destructive) {
+                                    modelContext.delete(existing)
+                                    try? modelContext.save()
+                                    saveBookData()
+                                } label: {
+                                    Label("Remove Bookmark", systemImage: "bookmark.slash")
+                                }
+                            }
+
+                            Divider()
+
+                            Button {
+                                beginRename(chapter)
+                            } label: {
+                                Label("Rename Chapter", systemImage: "pencil")
+                            }
+
+                            Button(role: .destructive) {
+                                Task { await deleteChapter(chapter) }
+                            } label: {
+                                Label("Delete Chapter", systemImage: "trash")
                             }
                         }
-
-                        Divider()
-
-                        Button {
-                            beginRename(chapter)
-                        } label: {
-                            Label("Rename Chapter", systemImage: "pencil")
-                        }
-
-                        Button(role: .destructive) {
-                            Task { await deleteChapter(chapter) }
-                        } label: {
-                            Label("Delete Chapter", systemImage: "trash")
-                        }
                     }
-                }
 
-                if displayIndex < allChapters.count - 1 {
-                    Divider()
-                        .background(Color.white.opacity(0.06))
-                        .padding(.leading, 64)
+                    if displayIndex < allChapters.count - 1 {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                            .padding(.leading, 64)
+                    }
                 }
             }
         }
@@ -695,11 +702,11 @@ struct ChapterListView: View {
 
     // MARK: - Private
 
-    private func syncChapters() async {
+    private func syncChapters(skipUnchanged: Bool = false) async {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            _ = try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext)
+            _ = try await ImportService().syncSeriesFromRoot(book, modelContext: modelContext, skipUnchanged: skipUnchanged)
             let chapters = book.chapters ?? []
             let hasEnglish = chapters.contains { $0.isEnglish }
             let hasVietnamese = chapters.contains { !$0.isEnglish }
@@ -756,9 +763,9 @@ struct ChapterListView: View {
         }
     }
 
-    private func chapterRenameRow(chapter: Chapter) -> some View {
+    private func chapterRenameRow(chapter: Chapter, number: Int) -> some View {
         HStack(spacing: 14) {
-            Text("\((languageChapters.firstIndex { $0.id == chapter.id } ?? 0) + 1)")
+            Text("\(number)")
                 .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundColor(theme.accent)
@@ -816,7 +823,7 @@ struct ChapterListView: View {
     private func saveBookmark() {
         guard let index = bookmarkChapterIndex else { return }
 
-        if let existing = bookmarkFor(index: index) {
+        if let existing = book.bookmarks?.first(where: { $0.chapterIndex == index }) {
             modelContext.delete(existing)
         }
 
@@ -832,18 +839,21 @@ struct ChapterListView: View {
     }
 
     private func loadCoverImage() async {
-        guard let thumbURL = book.thumbnailURL else { return }
-        let loaded = await Task.detached(priority: .userInitiated) { () -> (UIImage, UIColor?)? in
-            guard let data = try? Data(contentsOf: thumbURL),
-                  let image = UIImage(data: data) else { return nil }
-            return (image, image.dominantColor())
-        }.value
-        if let (image, uiColor) = loaded {
-            coverImage = image
-            if let uiColor {
-                dominantColor = Color(uiColor)
-            }
+        guard let thumbURL = book.thumbnailURL else {
+            coverImage = nil
+            dominantColor = nil
+            return
         }
+        if let preview = ThumbnailService.shared.preview(for: thumbURL, version: book.coverVersion) {
+            coverImage = preview
+        }
+        let size = ArtItem.previewMaxPixelSize
+        guard let image = await ThumbnailService.shared.cachedImage(
+            for: thumbURL, targetSize: CGSize(width: size, height: size), version: book.coverVersion
+        ), !Task.isCancelled else { return }
+        coverImage = image
+        let color = await Task.detached(priority: .utility) { image.dominantColor() }.value
+        if !Task.isCancelled { dominantColor = color.map { Color($0) } }
     }
 
     // MARK: - Art Album
@@ -1042,10 +1052,7 @@ struct ChapterListView: View {
 
         do {
             try await ImportService().setCustomCover(for: book, jpegData: jpegData, modelContext: modelContext)
-            coverImage = image
-            if let color = image.dominantColor() {
-                dominantColor = Color(color)
-            }
+            // The versioned cover task refreshes the preview after the save.
         } catch {
             print("Failed to set cover: \(error.localizedDescription)")
         }
@@ -1062,12 +1069,9 @@ struct ChapterListView: View {
         return "jpg"
     }
 
-    private func chapterRow(chapter: Chapter, index: Int) -> some View {
-        let isCurrentChapter = index == book.currentChapterIndex && book.readingProgress > 0
-        let userBookmark = bookmarkFor(index: index)
-
+    private func chapterRow(chapter: Chapter, number: Int, isCurrentChapter: Bool, userBookmark: Bookmark?) -> some View {
         return HStack(spacing: 14) {
-            Text("\((languageChapters.firstIndex { $0.id == chapter.id } ?? 0) + 1)")
+            Text("\(number)")
                 .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundColor(isCurrentChapter ? theme.accent : .tertiaryText)
@@ -1116,9 +1120,6 @@ struct ChapterListView: View {
         Task { await BookDataService.shared.save(book: book) }
     }
 
-    private func bookmarkFor(index: Int) -> Bookmark? {
-        book.sortedBookmarks.first { $0.chapterIndex == index }
-    }
 }
 
 #Preview {

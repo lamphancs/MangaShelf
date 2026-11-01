@@ -44,7 +44,7 @@ struct AddSeriesSmokeApp: App {
         for name in ["../escape", ".hidden", "a/b", "a:b", "a\nline"] {
             var invalid = draft
             invalid.folderName = name
-            try check(!invalid.detailsAreValid, "Unsafe folder accepted")
+            try check(!invalid.hasValidDetails, "Unsafe folder accepted")
         }
         var invalid = draft
         invalid.folderName = "Invalid Link"
@@ -151,6 +151,16 @@ struct AddSeriesSmokeApp: App {
         try check(returned.sortedChapters.map(\.filename) == [
             "Chapter 1.pdf", "Chapter 2.pdf", "EN/Chapter 2.pdf", "EN/Chapter 10.pdf"
         ], "Both languages scan in natural order without filename collisions")
+        let libraryStore = LibrarySummaryStore()
+        func librarySummary(at index: Int, withNumbers: Bool) async throws -> LibrarySeriesSummary {
+            let key = LibrarySummaryKey(bookID: returned.id, signature: returned.folderSignature,
+                                        chapterIndex: index, needsChapterNumbers: withNumbers)
+            return try await libraryStore.summary(for: key, in: container)
+        }
+        let bilingualSummary = try await librarySummary(at: 1, withNumbers: true)
+        try check(bilingualSummary.label == "Ch. 2/10" && bilingualSummary.language == 0.5
+                  && bilingualSummary.latestEnglish == 10 && bilingualSummary.latestVietnamese == 2,
+                  "Background library summary preserves bilingual progress and update numbers")
         let english = returned.sortedChapters[2]
         try check(english.displayName == "Chapter 2" && english.isEnglish, "EN display name")
         returned.currentChapterIndex = 2
@@ -183,6 +193,11 @@ struct AddSeriesSmokeApp: App {
         _ = try await service.scanSecretFolder(modelContext: context, force: true)
         try check(!ImportService.hasEnglishFolder(in: returnedFolder)
                   && returned.sortedChapters.allSatisfy { !$0.isEnglish }, "Removing EN folder removes EN chapters")
+        let rescannedSummary = try await librarySummary(at: 1, withNumbers: true)
+        try check(rescannedSummary.label == "Ch. 1/2" && rescannedSummary.latestEnglish == -1,
+                  "Library cache updates after the EN folder is removed")
+        let unreadSummary = try await librarySummary(at: 0, withNumbers: false)
+        try check(unreadSummary.label == "3 chapters", "Unread library card counts committed chapters")
         // Captures inherit the language of the link used to open the browser.
         let vnURL = returned.latestChapterURL
         let vnNumber = returned.latestChapterNumber
@@ -196,11 +211,13 @@ struct AddSeriesSmokeApp: App {
                   "EN capture creates EN directory and ignores VN filename collisions")
         try check(returned.sortedChapters.contains { $0.filename == "EN/Chapter 2.pdf" },
                   "EN capture appears in English chapters")
-        try check(returned.englishSeriesURL == enChapterURL.absoluteString
+        try check(returned.englishLatestChapterURL == enChapterURL.absoluteString
+                  && returned.englishSeriesURL == "https://example.com/en/manga"
                   && returned.latestChapterURL == vnURL && returned.latestChapterNumber == vnNumber,
                   "EN capture updates EN link and preserves latest VN chapter")
         let englishMetadata = await BookDataService.shared.load(seriesFolderURL: returnedFolder)
-        try check(englishMetadata?.englishSeriesURL == enChapterURL.absoluteString
+        try check(englishMetadata?.englishLatestChapterURL == enChapterURL.absoluteString
+                  && englishMetadata?.englishSeriesURL == "https://example.com/en/manga"
                   && englishMetadata?.latestChapterURL == vnURL && englishMetadata?.latestChapterNumber == vnNumber,
                   "EN capture link is portable")
         let duplicateEnglish = try await service.saveCapturedChapter(
@@ -208,7 +225,7 @@ struct AddSeriesSmokeApp: App {
             sourceURL: URL(string: "https://example.com/en/chapter-6"), isEnglish: true, modelContext: context
         )
         try check(duplicateEnglish.lastPathComponent == "Chapter 2 (2).pdf"
-                  && returned.englishSeriesURL == "https://example.com/en/chapter-6",
+                  && returned.englishLatestChapterURL == "https://example.com/en/chapter-6",
                   "Subsequent EN captures keep the destination and update EN link")
         do {
             _ = try await service.saveCapturedChapter(
@@ -217,7 +234,7 @@ struct AddSeriesSmokeApp: App {
             )
             throw NSError(domain: "Invalid capture accepted", code: 1)
         } catch is WebCaptureError { }
-        try check(returned.englishSeriesURL == "https://example.com/en/chapter-6"
+        try check(returned.englishLatestChapterURL == "https://example.com/en/chapter-6"
                   && returned.latestChapterURL == vnURL, "Failed capture preserves links")
         let capturedVietnamese = try await service.saveCapturedChapter(
             pdf, for: returned, filename: "Chapter 8.pdf", seriesFolderURL: returnedFolder,
@@ -225,7 +242,7 @@ struct AddSeriesSmokeApp: App {
         )
         try check(capturedVietnamese.deletingLastPathComponent().standardizedFileURL == returnedFolder.standardizedFileURL
                   && returned.latestChapterURL == "https://example.com/vn/chapter-8" && returned.latestChapterNumber == "8"
-                  && returned.englishSeriesURL == "https://example.com/en/chapter-6",
+                  && returned.englishLatestChapterURL == "https://example.com/en/chapter-6",
                   "Default VN capture keeps existing destination and latest chapter behavior")
         return "PASS: series creation, metadata round-trip, VN/EN discovery, natural sort, reader language isolation, separate progress/bookmarks, rescan identity, EN removal and language-aware capture destinations/links"
     }

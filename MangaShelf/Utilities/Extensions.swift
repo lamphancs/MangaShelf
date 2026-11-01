@@ -50,11 +50,11 @@ extension String {
 
 extension Chapter {
     /// Last number in the name, keeping decimals ("12.5" for "Chapter 12.5").
-    var extractedNumber: String? {
+    nonisolated var extractedNumber: String? {
         displayName.matches(of: /\d+(?:\.\d+)?/).last.map { String($0.output) }
     }
 
-    var chapterNumber: Double? {
+    nonisolated var chapterNumber: Double? {
         extractedNumber.flatMap { Double($0) }
     }
 }
@@ -128,30 +128,23 @@ extension UIImage {
 
 // MARK: - Book Display Helpers
 
-extension Book {
-    func chapterProgressLabel() -> String {
-        let chapters = sortedChapters
-        let currentChapter = chapters[safe: currentChapterIndex]
-        let currentNum = currentChapter?.extractedNumber ?? "\(currentChapterIndex + 1)"
-        // Highest chapter number across every language, so a lagging language still shows the true total.
+extension LibrarySeriesSummary {
+    /// Calculate the label and both library progress scales from the same chapter order.
+    nonisolated static func progress(in ordered: [Chapter], index currentChapterIndex: Int) -> Self {
+        let count = ordered.count
+        let unread = Self(label: "\(count) chapters")
+        guard currentChapterIndex > 0, currentChapterIndex < count else { return unread }
+        let current = ordered[currentChapterIndex]
+        let english = current.isEnglish
+        let previous = ordered.prefix(currentChapterIndex).count { $0.isEnglish == english }
+        guard previous > 0 else { return unread }
+        let languageCount = ordered.count { $0.isEnglish == english }
+        let currentNum = current.extractedNumber ?? "\(currentChapterIndex + 1)"
         let lastNum = [true, false]
-            .compactMap { isEnglish in chapters.last { $0.isEnglish == isEnglish }?.extractedNumber }
-            .max { (Double($0) ?? 0) < (Double($1) ?? 0) }
-            ?? "\(chapters.count)"
-        return "Ch. \(currentNum)/\(lastNum)"
-    }
-
-    /// Position of the current chapter within its language, measured against the language
-    /// with the most chapters — so progress is comparable when one language lags behind.
-    var progressAgainstLargestLanguage: Double {
-        let chapters = sortedChapters
-        guard let current = chapters[safe: currentChapterIndex] else { return 0.0 }
-        let englishCount = chapters.filter(\.isEnglish).count
-        let maxCount = max(chapters.count - englishCount, englishCount)
-        guard maxCount > 0 else { return 0.0 }
-        let languageChapters = chapters.filter { $0.isEnglish == current.isEnglish }
-        let index = languageChapters.firstIndex { $0.id == current.id } ?? 0
-        return min(Double(index) / Double(maxCount), 1.0)
+            .compactMap { isEnglish in ordered.last { $0.isEnglish == isEnglish }?.extractedNumber }
+            .max { (Double($0) ?? 0) < (Double($1) ?? 0) } ?? "\(count)"
+        return Self(label: "Ch. \(currentNum)/\(lastNum)", language: Double(previous) / Double(languageCount),
+                    largestLanguage: Double(previous) / Double(max(languageCount, count - languageCount)))
     }
 }
 

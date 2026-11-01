@@ -1,4 +1,6 @@
-// Appended to PDFPageView.swift in a disposable test build to exercise file-private rendering.
+// Appended to PDFContentView.swift in a disposable test build to exercise file-private rendering.
+import SwiftUI
+import ImageIO
 @MainActor
 func runReaderArtworkChecks() async throws -> String {
     struct CheckFailure: Error { let message: String }

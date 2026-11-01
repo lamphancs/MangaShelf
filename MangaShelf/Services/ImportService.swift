@@ -75,29 +75,11 @@ final class ImportService {
             }
         }
 
-        let fm = FileManager.default
-        let contents = try fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey])
-
-        var seriesFolders: [URL] = []
-        var singlePDFs: [URL] = []
-
-        for item in contents {
-            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-            if values.isDirectory == true {
-                let pdfs = (try? fm.contentsOfDirectory(at: item, includingPropertiesForKeys: nil))?.filter { $0.pathExtension.lowercased() == "pdf" } ?? []
-                if !pdfs.isEmpty || fm.fileExists(atPath: BookDataService.dataFileURL(in: item).path) {
-                    seriesFolders.append(item)
-                }
-            } else if item.pathExtension.lowercased() == "pdf" {
-                singlePDFs.append(item)
-            }
-        }
-
-        seriesFolders.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-        singlePDFs.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-
         let existingDescriptor = FetchDescriptor<Book>(predicate: #Predicate { $0.isSecret == isSecret })
         let existingBooks = try modelContext.fetch(existingDescriptor)
+        let (seriesFolders, singlePDFs) = try await Task.detached(priority: .utility) {
+            try Self.libraryContents(at: rootURL)
+        }.value
 
         let currentSeriesNames = Set(seriesFolders.map { $0.lastPathComponent })
         let currentSingleNames = Set(singlePDFs.map { $0.lastPathComponent })
@@ -154,12 +136,12 @@ final class ImportService {
         // 3) Sync or create series. Existing rows are updated in place — their bookmarks,
         //    progress, and other relationships stay intact even if data.json is unreadable.
         //    When `force` is false, a matching `folderSignature` means the on-disk folder
-        //    is byte-equivalent (mtime + pdf count) to the last scan, so the expensive
+        //    has the same timestamp/count fingerprint as the last scan, so the expensive
         //    `syncChapters` + cover refresh are skipped entirely.
         for folderURL in seriesFolders {
             let folderName = folderURL.lastPathComponent
             if let existing = seriesByFolder[folderName] {
-                let signature = folderSignature(at: folderURL)
+                let signature = await Task.detached(priority: .utility) { Self.folderSignature(at: folderURL) }.value
                 if !force, let signature, signature == existing.folderSignature {
                     continue
                 }
@@ -188,11 +170,36 @@ final class ImportService {
         return seriesFolders.count + singlePDFs.count
     }
 
+    nonisolated private static func libraryContents(at rootURL: URL) throws -> ([URL], [URL]) {
+        let fm = FileManager.default
+        let contents = try fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey])
+
+        var seriesFolders: [URL] = []
+        var singlePDFs: [URL] = []
+
+        for item in contents {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                let hasPDF = (try? fm.contentsOfDirectory(at: item, includingPropertiesForKeys: nil))?.contains { $0.pathExtension.lowercased() == "pdf" } == true
+                if hasPDF || fm.fileExists(atPath: BookDataService.dataFileURL(in: item).path) {
+                    seriesFolders.append(item)
+                }
+            } else if item.pathExtension.lowercased() == "pdf" {
+                singlePDFs.append(item)
+            }
+        }
+
+        seriesFolders.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        singlePDFs.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+        return (seriesFolders, singlePDFs)
+    }
+
     // MARK: - Sync Series From Root
 
     /// Sync a single series by resolving the root folder bookmark
     @discardableResult
-    func syncSeriesFromRoot(_ book: Book, modelContext: ModelContext) async throws -> Bool {
+    func syncSeriesFromRoot(_ book: Book, modelContext: ModelContext, skipUnchanged: Bool = false) async throws -> Bool {
         guard book.isSeries, let folderName = book.folderName else { return false }
         guard let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else { return false }
 
@@ -204,9 +211,12 @@ final class ImportService {
         defer { rootURL.stopAccessingSecurityScopedResource() }
 
         let folderURL = rootURL.appendingPathComponent(folderName)
-        try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
+        let signature = await Task.detached(priority: .utility) { Self.folderSignature(at: folderURL) }.value
+        if !skipUnchanged || signature == nil || signature != book.folderSignature || book.thumbnailPath == nil {
+            try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
+            book.folderSignature = signature
+        }
         await refreshCustomCover(for: book, folderURL: folderURL)
-        book.folderSignature = folderSignature(at: folderURL)
         try modelContext.save()
         return Self.hasEnglishFolder(in: folderURL)
     }
@@ -273,18 +283,15 @@ final class ImportService {
                     bookmark.chapterIndex = index
                 }
             }
-            book.folderSignature = folderSignature(at: seriesFolderURL)
+            book.folderSignature = Self.folderSignature(at: seriesFolderURL)
             if let sourceURL, ["http", "https"].contains(sourceURL.scheme?.lowercased() ?? ""), sourceURL.host != nil {
+                let suggestion = CaptureFileName.chapterSuggestion(url: sourceURL, title: chapterTitle)
+                let fallback = CaptureFileName.chapterSuggestion(url: nil, title: filename)
+                let label = suggestion == "Chapter" ? fallback : suggestion
                 if isEnglish {
-                    let suggestion = CaptureFileName.chapterSuggestion(url: sourceURL, title: chapterTitle)
-                    let fallback = CaptureFileName.chapterSuggestion(url: nil, title: filename)
-                    let label = suggestion == "Chapter" ? fallback : suggestion
                     book.englishLatestChapterURL = sourceURL.absoluteString
                     book.englishLatestChapterNumber = label == "Chapter" ? nil : String(label.dropFirst("Chapter ".count))
                 } else {
-                    let suggestion = CaptureFileName.chapterSuggestion(url: sourceURL, title: chapterTitle)
-                    let fallback = CaptureFileName.chapterSuggestion(url: nil, title: filename)
-                    let label = suggestion == "Chapter" ? fallback : suggestion
                     book.latestChapterURL = sourceURL.absoluteString
                     book.latestChapterNumber = label == "Chapter" ? nil : String(label.dropFirst("Chapter ".count))
                 }
@@ -325,7 +332,7 @@ final class ImportService {
         }
 
         try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
-        book.folderSignature = folderSignature(at: folderURL)
+        book.folderSignature = Self.folderSignature(at: folderURL)
         try modelContext.save()
         await BookDataService.shared.save(book: book, seriesFolderURL: folderURL)
     }
@@ -369,7 +376,7 @@ final class ImportService {
         chapter.filename = newFilename
         do {
             try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
-            book.folderSignature = folderSignature(at: folderURL)
+            book.folderSignature = Self.folderSignature(at: folderURL)
             try modelContext.save()
         } catch {
             // Keep disk and library in agreement: undo the move if the library can't be updated.
@@ -426,7 +433,7 @@ final class ImportService {
             book.folderName = newFolderName
             book.filename = newFolderName
             book.filePath = newFolderName
-            book.folderSignature = folderSignature(at: newURL)
+            book.folderSignature = Self.folderSignature(at: newURL)
         }
         do {
             try modelContext.save()
@@ -438,7 +445,7 @@ final class ImportService {
                 book.folderName = oldFolderName
                 book.filename = oldFolderName
                 book.filePath = oldFolderName
-                book.folderSignature = folderSignature(at: oldURL)
+                book.folderSignature = Self.folderSignature(at: oldURL)
             }
             throw error
         }
@@ -526,7 +533,7 @@ final class ImportService {
             folderName: folderName
         )
         book.isSecret = isSecret
-        book.folderSignature = folderSignature(at: folderURL)
+        book.folderSignature = Self.folderSignature(at: folderURL)
 
         modelContext.insert(book)
         for chapter in chapters {
@@ -638,7 +645,7 @@ final class ImportService {
         for (index, pdfFile) in pdfFiles.enumerated() {
             let filename = Self.chapterFilename(pdfFile, in: folderURL)
             if let existing = existingByFilename[filename] {
-                existing.sortOrder = index
+                if existing.sortOrder != index { existing.sortOrder = index }
                 if existing.totalPages == 0 {
                     existing.totalPages = thumbnailService.getPageCount(for: pdfFile)
                 }
@@ -758,12 +765,12 @@ final class ImportService {
 
     // MARK: - Private: Helpers
 
-    /// Cheap fingerprint of a series folder: `"{folder mtime epoch}_{pdf count}"`.
+    /// Versioned fingerprint of root/EN modification times and PDF counts.
     /// Used by the launch-time scan to skip per-series reconciliation when nothing on
     /// disk has changed since the last scan. Returns `nil` only when the folder cannot
     /// be stat'd or enumerated — in which case the caller treats it as "changed" and
     /// falls back to the full sync path.
-    private func folderSignature(at folderURL: URL) -> String? {
+    nonisolated private static func folderSignature(at folderURL: URL) -> String? {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: folderURL.path),
               let mtime = attrs[.modificationDate] as? Date else {
@@ -774,11 +781,11 @@ final class ImportService {
             .count ?? 0
         let englishURL = folderURL.appendingPathComponent("EN", isDirectory: true)
         let englishMtime = (try? fm.attributesOfItem(atPath: englishURL.path))?[.modificationDate] as? Date
-        let englishCount = (try? Self.chapterFiles(in: folderURL).count) ?? 0
+        let englishCount = (try? Self.chapterFiles(in: folderURL, sorted: false).count) ?? 0
         return "v2_\(mtime.timeIntervalSince1970)_\(pdfCount)_\(englishMtime?.timeIntervalSince1970 ?? -1)_\(englishCount)"
     }
 
-    static func hasEnglishFolder(in folderURL: URL) -> Bool {
+    nonisolated static func hasEnglishFolder(in folderURL: URL) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(
             atPath: folderURL.appendingPathComponent("EN").path, isDirectory: &isDirectory
@@ -786,14 +793,14 @@ final class ImportService {
     }
 
     /// VN PDFs stay in the series root; EN PDFs use relative paths to keep identities distinct.
-    static func chapterFiles(in folderURL: URL) throws -> [URL] {
+    nonisolated static func chapterFiles(in folderURL: URL, sorted: Bool = true) throws -> [URL] {
         func pdfs(in directory: URL) throws -> [URL] {
-            try FileManager.default.contentsOfDirectory(
+            let files = try FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
             )
             .filter { $0.pathExtension.lowercased() == "pdf"
                 && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            return sorted ? files.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending } : files
         }
         let vietnamese = try pdfs(in: folderURL)
         let english = try hasEnglishFolder(in: folderURL)

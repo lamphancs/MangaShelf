@@ -284,9 +284,10 @@ nonisolated enum PDFLosslessWriter {
         private func deflate(_ data: Data) throws -> Data {
             var length = compressBound(uLong(data.count))
             var result = Data(count: Int(length))
-            let status = result.withUnsafeMutableBytes { destination in
-                data.withUnsafeBytes { source in
-                    compress2(destination.bindMemory(to: Bytef.self).baseAddress!, &length,
+            let status = try result.withUnsafeMutableBytes { destination in
+                guard let buffer = destination.bindMemory(to: Bytef.self).baseAddress else { throw Failure.compression }
+                return data.withUnsafeBytes { source in
+                    compress2(buffer, &length,
                               source.bindMemory(to: Bytef.self).baseAddress, uLong(data.count), Z_BEST_COMPRESSION)
                 }
             }

@@ -11,6 +11,7 @@ struct BookRowView: View {
 
     let book: Book
     var hasUpdate = false
+    var progress = LibrarySeriesSummary()
     let onTap: () -> Void
     let onRename: () -> Void
     let onSetCover: () -> Void
@@ -34,12 +35,14 @@ struct BookRowView: View {
                     .lineLimit(1)
 
                 if book.isSeries {
-                    seriesLabel
+                    Label(progress.label, systemImage: "book.fill")
+                        .font(.caption)
+                        .foregroundColor(.tertiaryText)
+                    BookProgressBar(value: progress.language)
                 } else {
                     singleBookLabel
+                    BookProgressBar(value: book.readingProgress)
                 }
-
-                BookProgressBar(value: book.readingProgress)
             }
 
             Spacer(minLength: 0)
@@ -75,16 +78,6 @@ struct BookRowView: View {
     }
 
     // MARK: - Labels
-
-    private var seriesLabel: some View {
-        let chapterCount = book.sortedChapters.count
-        return Label(
-            book.readingProgress > 0 ? book.chapterProgressLabel() : "\(chapterCount) chapters",
-            systemImage: "book.fill"
-        )
-        .font(.caption)
-        .foregroundColor(.tertiaryText)
-    }
 
     private var singleBookLabel: some View {
         Label(

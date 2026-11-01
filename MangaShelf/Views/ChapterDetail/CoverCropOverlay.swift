@@ -15,7 +15,7 @@ struct CoverCropOverlay: View {
     @State private var boxOffset: CGSize = .zero
     @GestureState private var dragTranslation: CGSize = .zero
 
-    private let coverAspectRatio: CGFloat = 2.0 / 3.0
+    private let coverAspectRatio: CGFloat = Layout.coverAspectRatio
     private let imageScale: CGFloat = 0.8
 
     var body: some View {

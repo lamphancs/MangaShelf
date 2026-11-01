@@ -13,6 +13,7 @@ struct BookCardView: View {
 
     let book: Book
     var hasUpdate = false
+    var progress = LibrarySeriesSummary()
     let onTap: () -> Void
     let onRename: () -> Void
     let onSetCover: () -> Void
@@ -50,8 +51,11 @@ struct BookCardView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(theme.cardBorder, lineWidth: 3)
         )
-        .compositingGroup()
-        .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.cardBackground)
+                .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+        }
         .overlay(alignment: .topTrailing) {
             if hasUpdate { NewChapterBadge().padding(6) }
         }
@@ -79,12 +83,11 @@ struct BookCardView: View {
 
     @ViewBuilder
     private var seriesProgressView: some View {
-        let chapterCount = book.sortedChapters.count
         VStack(alignment: .leading, spacing: 4) {
-            BookProgressBar(value: book.progressAgainstLargestLanguage)
+            BookProgressBar(value: progress.largestLanguage)
 
             Label(
-                book.readingProgress > 0 ? book.chapterProgressLabel() : "\(chapterCount) chapters",
+                progress.label,
                 systemImage: "book.fill"
             )
             .font(.caption2)
@@ -110,7 +113,7 @@ struct BookCardView: View {
     }
 
     /// Same 2:3 ratio as the cover crop, so the grid shows the cover uncropped.
-    private static let coverAspectRatio: CGFloat = 2.0 / 3.0
+    private static let coverAspectRatio: CGFloat = Layout.coverAspectRatio
     private static let displaySize = CGSize(width: 200, height: 300)
 }
 

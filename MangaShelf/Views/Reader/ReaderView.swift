@@ -49,7 +49,7 @@ struct ReaderView: View {
                 initialOffset: viewModel.initialOffset,
                 restoreProgress: viewModel.restoreProgress,
                 onPageChange: { newPage in
-                    viewModel.updatePage(newPage, modelContext: modelContext)
+                    viewModel.updatePage(newPage)
                 },
                 onTap: {
                     viewModel.toggleOverlay()

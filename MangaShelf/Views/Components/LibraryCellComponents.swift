@@ -9,7 +9,7 @@
 import SwiftUI
 
 /// A book cover thumbnail that loads (and caches) its image via `ThumbnailService`,
-/// showing a spinner while loading and a placeholder glyph when there is no cover.
+/// using a static placeholder while the cover is unavailable.
 ///
 /// Layout parameters mirror the two call sites exactly:
 /// - grid card: `width == nil` (fills available width), `aspectRatio == 2:3`, no corner clip
@@ -29,7 +29,6 @@ struct BookCoverThumbnail: View {
     var cornerRadius: CGFloat? = nil
 
     @State private var thumbnailImage: UIImage?
-    @State private var isLoadingThumbnail = true
 
     var body: some View {
         sizedFill
@@ -67,9 +66,6 @@ struct BookCoverThumbnail: View {
             Image(uiImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-        } else if isLoadingThumbnail {
-            ProgressView()
-                .tint(theme.accent)
         } else {
             Image(systemName: "book.closed.fill")
                 .font(placeholderFont)
@@ -79,7 +75,7 @@ struct BookCoverThumbnail: View {
 
     private func loadThumbnail() async {
         guard let thumbnailURL = book.thumbnailURL else {
-            isLoadingThumbnail = false
+            thumbnailImage = nil
             return
         }
 
@@ -89,10 +85,9 @@ struct BookCoverThumbnail: View {
             height: displaySize.height * scale
         )
 
-        if let image = await ThumbnailService.shared.cachedImage(for: thumbnailURL, targetSize: targetSize) {
-            thumbnailImage = image
-        }
-        isLoadingThumbnail = false
+        let image = await ThumbnailService.shared.cachedImage(for: thumbnailURL, targetSize: targetSize, version: book.coverVersion)
+        guard !Task.isCancelled else { return }
+        thumbnailImage = image
     }
 }
 

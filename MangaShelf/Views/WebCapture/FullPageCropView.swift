@@ -50,8 +50,8 @@ struct FullPageCropView: View {
             let size = CGSize(width: width, height: document.size.height * width / document.size.width)
             let canvasTop = max(24, (geometry.size.height - size.height) / 2)
             let viewport = visibleRect.isEmpty ? CGRect(origin: .zero, size: geometry.size) : visibleRect
-            let first = max(0, Int(floor((viewport.minY - canvasTop) / 384)) - 1)
-            let last = min(Int(ceil(size.height / 384)), max(first, Int(ceil((viewport.maxY - canvasTop) / 384)) + 1))
+            let first = max(0, Int(floor((viewport.minY - canvasTop) / CaptureCrop.previewTileHeight)) - 1)
+            let last = min(Int(ceil(size.height / CaptureCrop.previewTileHeight)), max(first, Int(ceil((viewport.maxY - canvasTop) / CaptureCrop.previewTileHeight)) + 1))
             ScrollView([.horizontal, .vertical]) {
                 canvas(size: size, visibleTiles: first..<max(first, last))
                     .padding(.vertical, 24)
@@ -138,9 +138,9 @@ struct FullPageCropView: View {
             let height = document.size.height * width / document.size.width * 0.64
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
-                    ForEach(0..<Int(ceil(height / 192)), id: \.self) { index in
-                        let y = CGFloat(index) * 192
-                        let tileHeight = min(192, height - y)
+                    ForEach(0..<Int(ceil(height / CaptureCrop.thumbnailTileHeight)), id: \.self) { index in
+                        let y = CGFloat(index) * CaptureCrop.thumbnailTileHeight
+                        let tileHeight = min(CaptureCrop.thumbnailTileHeight, height - y)
                         CapturePDFTile(renderer: renderer,
                                        crop: CGRect(x: 0, y: y / height, width: 1, height: tileHeight / height),
                                        displaySize: CGSize(width: width, height: tileHeight))
@@ -267,8 +267,8 @@ struct FullPageCropView: View {
                 .frame(width: size.width, height: size.height)
                 .overlay(alignment: .topLeading) {
                     ForEach(visibleTiles, id: \.self) { index in
-                        let top = CGFloat(index) * 384
-                        let height = min(384, size.height - top)
+                        let top = CGFloat(index) * CaptureCrop.previewTileHeight
+                        let height = min(CaptureCrop.previewTileHeight, size.height - top)
                         CapturePDFTile(renderer: renderer,
                                        crop: CGRect(x: 0, y: top / size.height, width: 1, height: height / size.height),
                                        displaySize: CGSize(width: size.width, height: height))

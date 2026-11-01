@@ -4,33 +4,6 @@
 //
 
 import SwiftUI
-import ImageIO
-
-struct ArtItem: Identifiable {
-    let id: String
-    /// Downsampled preview for carousels and thumbnails; the viewer loads full resolution on demand.
-    let image: UIImage
-    var isCover: Bool = false
-
-    /// Longest side of `image`. Reader captures are full-screen at native scale (~14 MB decoded
-    /// each), so keeping every one at full resolution quickly exhausts memory.
-    nonisolated static let previewMaxPixelSize: CGFloat = 1400
-
-    /// Decodes a downsampled image straight from disk without decoding the full bitmap first.
-    nonisolated static func downsampledImage(at url: URL, maxPixelSize: CGFloat = previewMaxPixelSize) -> UIImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            return nil
-        }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return UIImage(cgImage: cgImage)
-    }
-}
 
 private struct ClearFullScreenBackground: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
@@ -61,7 +34,6 @@ struct ArtViewerOverlay: View {
         let image: UIImage
     }
     @State private var isDismissing = false
-    @State private var appeared = false
     /// Full-resolution image for the current item only, so at most one is held in memory.
     @State private var fullImage: (id: String, image: UIImage)?
 
@@ -143,7 +115,7 @@ struct ArtViewerOverlay: View {
                                     let shouldDismiss = abs(dragOffset) > 120 || abs(velocity) > 800
 
                                     if shouldDismiss {
-                                        performDismiss(direction: dragOffset > 0 ? 1 : -1)
+                                        performDismiss()
                                     } else if dragOffset != 0 {
                                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                             dragOffset = 0
@@ -172,7 +144,7 @@ struct ArtViewerOverlay: View {
                 VStack(spacing: 0) {
                     HStack {
                         Button {
-                            performDismiss(direction: -1)
+                            performDismiss()
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 20, weight: .bold))
@@ -273,7 +245,7 @@ struct ArtViewerOverlay: View {
                     if !item.isCover, let openInReader = openInReaderAction?(item.id) {
                         Button {
                             openInReader()
-                            performDismiss(direction: -1)
+                            performDismiss()
                         } label: {
                             Label("Open in Reader", systemImage: "book")
                         }
@@ -360,7 +332,7 @@ struct ArtViewerOverlay: View {
         .padding(.bottom, 6)
     }
 
-    private func performDismiss(direction: CGFloat) {
+    private func performDismiss() {
         withAnimation(.easeInOut(duration: 0.3)) {
             isDismissing = true
             dragOffset = 0

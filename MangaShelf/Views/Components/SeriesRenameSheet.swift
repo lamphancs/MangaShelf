@@ -20,9 +20,9 @@ struct SeriesRenameSheet: View {
 
     private var trimmedTitle: String { titleInput.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedFolder: String { folderInput.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var folderIsValid: Bool { NewSeriesDraft.isValidFolderName(trimmedFolder) }
+    private var isFolderValid: Bool { NewSeriesDraft.isValidFolderName(trimmedFolder) }
     private var hasChanges: Bool { trimmedTitle != book.title || trimmedFolder != book.folderName }
-    private var canSave: Bool { !trimmedTitle.isEmpty && folderIsValid && hasChanges }
+    private var canSave: Bool { !trimmedTitle.isEmpty && isFolderValid && hasChanges }
 
     var body: some View {
         NavigationStack {
@@ -38,7 +38,7 @@ struct SeriesRenameSheet: View {
                 } header: {
                     Text("Folder")
                 } footer: {
-                    if !trimmedFolder.isEmpty && !folderIsValid {
+                    if !trimmedFolder.isEmpty && !isFolderValid {
                         Text("Folder names cannot start with a dot or contain / or :.")
                             .foregroundStyle(.red)
                     } else {

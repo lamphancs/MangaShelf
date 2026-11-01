@@ -18,6 +18,7 @@ struct LibraryView: View {
     @Query private var books: [Book]
 
     @State private var viewModel: LibraryViewModel
+    @State private var summaryStore = LibrarySummaryStore()
     @State private var selectedBook: Book?
     @State private var navigationPath = NavigationPath()
     @State private var verificationBrowser: WebPageCaptureModel?
@@ -44,12 +45,9 @@ struct LibraryView: View {
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 20)
     ]
 
-    private var filteredBooks: [Book] {
-        viewModel.filteredAndSortedBooks(books)
-    }
-
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        let filteredBooks = viewModel.filteredAndSortedBooks(books)
+        return NavigationStack(path: $navigationPath) {
             ZStack {
                 theme.libraryBackground
                     .ignoresSafeArea()
@@ -68,24 +66,7 @@ struct LibraryView: View {
                         case .grid:
                             LazyVGrid(columns: columns, spacing: 24) {
                                 ForEach(filteredBooks) { book in
-                                    BookCardView(
-                                        book: book,
-                                        hasUpdate: hasUpdate(book),
-                                        onTap: {
-                                            if book.isSeries {
-                                                navigationPath.append(book.id)
-                                            } else {
-                                                selectedBook = book
-                                            }
-                                        },
-                                        onRename: {
-                                            startRename(book)
-                                        },
-                                        onSetCover: {
-                                            bookForCoverPick = book
-                                            showPhotoPicker = true
-                                        }
-                                    )
+                                    libraryCell(book, mode: .grid)
                                 }
                                 AddSeriesTile(isGrid: true) { showAddSeries = true }
                             }
@@ -96,24 +77,7 @@ struct LibraryView: View {
                         case .list:
                             LazyVStack(spacing: 10) {
                                 ForEach(filteredBooks) { book in
-                                    BookRowView(
-                                        book: book,
-                                        hasUpdate: hasUpdate(book),
-                                        onTap: {
-                                            if book.isSeries {
-                                                navigationPath.append(book.id)
-                                            } else {
-                                                selectedBook = book
-                                            }
-                                        },
-                                        onRename: {
-                                            startRename(book)
-                                        },
-                                        onSetCover: {
-                                            bookForCoverPick = book
-                                            showPhotoPicker = true
-                                        }
-                                    )
+                                    libraryCell(book, mode: .list)
                                 }
                                 AddSeriesTile(isGrid: false) { showAddSeries = true }
                             }
@@ -125,19 +89,7 @@ struct LibraryView: View {
                     .scrollIndicators(.hidden)
                 }
 
-                if viewModel.isLoading {
-                    ZStack {
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
 
-                        ProgressView()
-                            .tint(theme.accent)
-                            .scaleEffect(1.5)
-                            .padding(40)
-                            .background(theme.cardBackground)
-                            .cornerRadius(16)
-                    }
-                }
             }
             .searchable(text: $viewModel.searchText, prompt: "Search by title")
             .navigationTitle(viewModel.isSecretMode ? "Secret Shelf" : "Library")
@@ -148,6 +100,12 @@ struct LibraryView: View {
                 }
             }
             .toolbar {
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.fixed, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Add Series", systemImage: "plus") { showAddSeries = true }
+                }
+
                 ToolbarItem(placement: .topBarLeading) {
                     if !filteredBooks.isEmpty {
                         SortMenuView(selectedOption: $viewModel.sortOption)
@@ -312,6 +270,24 @@ struct LibraryView: View {
         }
     }
 
+    private func libraryCell(_ book: Book, mode: LibraryViewMode) -> some View {
+        let links = onlineChapters.isEmpty ? [] : sources(book)
+        return LibraryBookCell(
+            book: book, mode: mode, store: summaryStore,
+            onlineEnglish: links.first { $0.english }.flatMap { onlineChapters[$0.page] },
+            onlineVietnamese: links.first { !$0.english }.flatMap { onlineChapters[$0.page] },
+            onTap: {
+                if book.isSeries { navigationPath.append(book.id) }
+                else { selectedBook = book }
+            },
+            onRename: { startRename(book) },
+            onSetCover: {
+                bookForCoverPick = book
+                showPhotoPicker = true
+            }
+        )
+    }
+
     private func sources(_ book: Book) -> [(page: URL, english: Bool)] {
         guard book.isSeries else { return [] }
         return [(book.seriesURL, book.latestChapterURL, false),
@@ -322,23 +298,6 @@ struct LibraryView: View {
             }.first
             guard let page else { return nil }
             return (page, english)
-        }
-    }
-
-    private func localLatest(_ book: Book, english: Bool) -> Double? {
-        let chapters = (book.chapters ?? []).filter { $0.isEnglish == english }
-        if chapters.isEmpty { return -1 }
-        let numbers = chapters.compactMap { chapter in
-            ChapterUpdateSource.chapterNumber(chapter.displayName) ?? chapter.chapterNumber
-        }
-        return numbers.max()
-    }
-
-    private func hasUpdate(_ book: Book) -> Bool {
-        sources(book).contains { source in
-            guard let latest = onlineChapters[source.page],
-                  let local = localLatest(book, english: source.english) else { return false }
-            return latest > local
         }
     }
 
@@ -374,22 +333,33 @@ struct LibraryView: View {
             }
         }
         guard !Task.isCancelled else { return }
-        checkID = nil
-        let issues = shelf.flatMap { book in
-            sources(book).compactMap { source -> String? in
+        var issues: [String] = []
+        var foundUpdate = false
+        for book in shelf {
+            let links = sources(book)
+            guard !links.isEmpty else { continue }
+            let key = LibrarySummaryKey(bookID: book.id, signature: book.folderSignature,
+                                        chapterIndex: book.currentChapterIndex, needsChapterNumbers: true)
+            let summary = try? await summaryStore.summary(for: key, in: modelContext.container)
+            guard !Task.isCancelled else { return }
+            for source in links {
                 let label = source.english ? "\(book.title) (EN)" : book.title
-                if let message = failures[source.page] { return "\(label) — \(message)" }
-                if localLatest(book, english: source.english) == nil {
-                    return "\(label) — No numbered PDF found. Include the chapter number in a filename."
+                let local = source.english ? summary?.latestEnglish : summary?.latestVietnamese
+                if let message = failures[source.page] {
+                    issues.append("\(label) — \(message)")
+                } else if let local, let remote = onlineChapters[source.page] {
+                    if remote > local { foundUpdate = true }
+                } else {
+                    issues.append("\(label) — No numbered PDF found. Include the chapter number in a filename.")
                 }
-                return nil
             }
         }
+        checkID = nil
         if pages.isEmpty {
             checkMessage = "Add a ToonGod series link in Info to check for new chapters."
         } else if !issues.isEmpty {
             checkMessage = issues.joined(separator: "\n\n")
-        } else if !shelf.contains(where: hasUpdate) {
+        } else if !foundUpdate {
             checkMessage = "No new chapters found on the checked sources."
         }
     }
