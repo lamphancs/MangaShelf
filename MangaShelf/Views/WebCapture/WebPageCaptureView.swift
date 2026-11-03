@@ -110,7 +110,7 @@ struct WebPageCaptureView: View {
             .toolbar(model.document == nil ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
+                    Button("Close", action: returnToBrowser)
                         .disabled(isExporting)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -122,10 +122,7 @@ struct WebPageCaptureView: View {
                         }
                         .disabled(referenceChapters.isEmpty || isExporting)
                         .accessibilityLabel(showComparison ? "Hide chapter comparison" : "Compare with saved chapter")
-                        Button("Back to Page") {
-                            model.returnToPage()
-                            resetPreview()
-                        }
+                        Button("Back to Page", action: returnToBrowser)
                         .disabled(isExporting)
                     }
                 }
@@ -505,7 +502,7 @@ struct WebPageCaptureView: View {
                     }
                     .disabled(model.nextChapterURL == nil)
                     if model.nextChapterURL == nil {
-                        Text("No next-chapter link found. Close this message and use Back to Page to navigate manually.")
+                        Text("No next-chapter link found. Dismiss this message, then tap Close to return to the page and navigate manually.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -531,6 +528,11 @@ struct WebPageCaptureView: View {
     private func advanceToNextChapter(automaticallyCapture: Bool) {
         guard model.goToNextChapter(automaticallyCapture: automaticallyCapture) else { return }
         showSaveSuccess = false
+        resetPreview()
+    }
+
+    private func returnToBrowser() {
+        model.returnToPage()
         resetPreview()
     }
 
