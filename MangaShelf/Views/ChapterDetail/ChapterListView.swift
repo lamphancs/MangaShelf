@@ -29,6 +29,7 @@ struct ChapterListView: View {
     @State private var showEditSeriesNote = false
     @State private var showInfoBox = false
     @State private var captureURL: CaptureLink?
+    @State private var downloadURL: CaptureLink?
     @State private var artImages: [ArtItem] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var artViewerItem: ArtViewerItem?
@@ -114,6 +115,11 @@ struct ChapterListView: View {
         }
         .sheet(isPresented: $showEditSeriesNote) {
             SeriesNoteEditorSheet(book: book)
+        }
+        .fullScreenCover(item: $downloadURL, onDismiss: {
+            Task { await syncChapters() }
+        }) { link in
+            WebsiteDownloadView(url: link.url, book: book, isEnglish: link.isEnglish)
         }
         .fullScreenCover(item: $captureURL, onDismiss: {
             Task {
@@ -539,6 +545,13 @@ struct ChapterListView: View {
             }
             .contextMenu {
                 if let url {
+                    if !kind.isLatestChapter {
+                        Button {
+                            downloadURL = CaptureLink(url: url, isEnglish: kind.isEnglish)
+                        } label: {
+                            Label("Tải truyện từ website", systemImage: "arrow.down.doc")
+                        }
+                    }
                     Button {
                         UIPasteboard.general.string = url.absoluteString
                         UINotificationFeedbackGenerator().notificationOccurred(.success)

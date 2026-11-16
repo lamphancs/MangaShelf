@@ -359,3 +359,70 @@ MangaShelf repository/
 - The original WebCaptureSmoke large-export assertion also failed on unchanged HEAD: it required no growth despite the existing seam-repair allowance. The assertion now uses that allowance and reports the joined PDF size being compared; pixel-equality and text checks remain unchanged. Its optional live-diagnostic interpolation is explicit to avoid a pre-existing test compiler warning.
 - Existing Xcode builds emit an AppIntents metadata-extraction warning because the target has no AppIntents dependency. It is a build-tool diagnostic, not a Swift compilation warning. Do not add a framework or suppress diagnostics merely to hide it.
 - Simulator regression checks cannot establish that every feature is unchanged on physical devices. Manual coverage still includes both shelves, real provider permissions, real-site verification, Dynamic Type, rotation, keyboard/sheet presentation and representative large-PDF performance.
+
+## Website chapter downloads (2026-11-16)
+
+Hold a VN/EN homepage link in `ChapterListView` → **Tải truyện từ website**.
+`WebsiteDownloadView` provides search, selection, per-chapter states, source WebKit
+verification, stop/retry, library return and Files sharing. It uses ThemeManager
+and the existing book/language destination; no SwiftData schema changes.
+
+`WebsiteProvider` separates ToonGod/Madara, Omega, damconuong and TruyenQQ rules.
+Chapter URLs are scoped to the current series and deduplicated; Decimal numbers
+produce canonical `Chapter #.pdf` names. Omega parses matching structured Next.js
+state and checks every API page against total/current/last metadata. Other DOM
+lists carry a visible unverified-completeness warning. damconuong `.cool` and
+observed `.tech` links share one canonical host. Source login/verification runs
+in the existing WebPageCaptureModel with normal/secret cookie-store semantics.
+
+`WebsiteDownloadModel` runs chapters sequentially with up to three HTTP image transfers, explicitly syncs
+WK cookies to an ephemeral URLSession, supplies Referer and the WebKit user agent,
+limits timeouts/retries, and never retries HTTP 401/403 automatically. Blob/data
+images are read inside their owning page in 64 KiB chunks. Dismissal stops work. On backgrounding, a bounded UIApplication background task
+tries to finish the current native chapter; WebKit-dependent work stops, and no new
+chapter is started in the background. Expiration cancels the work. Completed PDFs
+remain and chapter temporary files are removed. Downloads are not resumable across app termination. Missing or invalid
+images fail the chapter before import.
+
+`ChapterImagePDF` writes separate image objects to a disk file and one long PDF
+page (fixed browser viewport width; height follows content), without a chapter-sized bitmap. JPEG DCT bytes and
+ICC profiles are embedded unchanged. Unsupported CMYK/EXIF orientations fail
+explicitly. Static 8-bit PNG/WebP are decoded and Flate-compressed with white alpha
+compositing; no JPEG re-encoding. ImportService handles final atomic file naming,
+VN/EN placement and library synchronization. Sharing copies one selected PDF to a
+temporary file while holding root security-scoped access.
+
+See `Tests/WebsiteDownloadSmoke/README.md` for limits, coverage and the distinction
+between fixture tests and live website verification. Full real-chapter downloads
+on a physical iPhone remain unverified; do not claim complete provider support.
+
+### Download performance follow-up
+
+Before chapter navigation, download its HTML using the authenticated native session
+and extract lazy image URLs from an inert HTML template. This neither navigates the
+visible browser nor executes page scripts. Cipher-backed pages and Omega without
+an explicit image count fall back to the actual WebKit page. Dynamic pages only
+scroll when image placeholders are unresolved, rather than traversing every viewport.
+
+`WebsiteImageTransfer` uses disk-backed URLSession download tasks rather than Swift
+AsyncBytes processing for every byte. A maximum of three images are in flight;
+results retain original URL order. Download delegate progress enforces the 40 MB
+limit, and HTTP failures/cancellation retain the existing fail-before-import behavior.
+PNG/WebP channel packing uses Accelerate instead of per-pixel Swift loops; JPEG
+streams and compression quality remain unchanged. Per-chapter timings separate URL
+resolution, image transfer, PDF creation and library save. The source pane defaults
+to hidden and opens automatically for verification.
+
+This is not a persistent background URLSession or a resumable system download queue.
+The bounded background lease can finish native work only while iOS allows execution;
+WebKit preparation still needs the foreground. No 5–10-second live-chapter guarantee.
+
+### Fixed-width chapter PDFs
+
+Website downloads freeze the current full-width WebKit viewport width at the start
+of the selected batch and pass it explicitly to ChapterImagePDF. Every chapter in
+that batch uses this width; total image aspect ratios determine height. The former
+14,400-point scaling cap is removed at the user's request, following the existing
+Browse & Capture long-page approach. JPEG streams and embedded pixel dimensions
+are unchanged. Rotations during the batch do not change the selected width; a new
+batch uses its current viewport. Existing PDFs are not rewritten.
