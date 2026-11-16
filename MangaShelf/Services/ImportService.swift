@@ -315,6 +315,13 @@ final class ImportService {
     /// the current chapter, and bookmarks are remapped (bookmarks on the deleted chapter are dropped).
     @MainActor
     func deleteChapter(_ chapter: Chapter, from book: Book, modelContext: ModelContext) async throws {
+        try await deleteChapters([chapter], from: book, modelContext: modelContext)
+    }
+
+    /// Removes several chapter PDFs, then re-syncs once. Files removed before a failure stay
+    /// removed and are still synced, so the list matches the disk before the error is thrown.
+    @MainActor
+    func deleteChapters(_ chapters: [Chapter], from book: Book, modelContext: ModelContext) async throws {
         guard book.isSeries, let folderName = book.folderName,
               let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey) else {
             throw FileServiceError.bookmarkResolutionFailed
@@ -326,15 +333,23 @@ final class ImportService {
         defer { rootURL.stopAccessingSecurityScopedResource() }
 
         let folderURL = rootURL.appendingPathComponent(folderName)
-        let fileURL = chapter.pdfURL(folderURL: folderURL)
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
+        // Resolve every URL before touching disk: syncing may replace the chapter models.
+        let fileURLs = chapters.map { $0.pdfURL(folderURL: folderURL) }
+        var removalError: Error?
+        for fileURL in fileURLs where FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+            } catch {
+                removalError = error
+                break
+            }
         }
 
         try await syncChapters(book, folderURL: folderURL, modelContext: modelContext)
         book.folderSignature = Self.folderSignature(at: folderURL)
         try modelContext.save()
         await BookDataService.shared.save(book: book, seriesFolderURL: folderURL)
+        if let removalError { throw removalError }
     }
 
     // MARK: - Rename Chapter

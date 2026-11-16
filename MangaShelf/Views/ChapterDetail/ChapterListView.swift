@@ -41,6 +41,9 @@ struct ChapterListView: View {
     @State private var renameText = ""
     @State private var renameErrorMessage: String?
     @FocusState private var isRenameFieldFocused: Bool
+    @State private var isSelectingChapters = false
+    @State private var selectedChapterIDs: Set<UUID> = []
+    @State private var showDeleteSelectedConfirmation = false
     @AppStorage(StorageKey.chapterRowShowSize) private var showChapterSize = false
     @AppStorage(StorageKey.chapterRowShowDate) private var showChapterDate = false
     @AppStorage(StorageKey.chapterRowDateStyle) private var chapterDateStyle: ChapterDateStyle = .absolute
@@ -108,6 +111,12 @@ struct ChapterListView: View {
             }
         }
         .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom) {
+            if isSelectingChapters {
+                selectionBar(chapters: chapters)
+                    .transition(.move(edge: .bottom))
+            }
+        }
         .refreshable { await syncChapters() }
         .background(theme.libraryBackground)
         .navigationTitle(book.title)
@@ -208,6 +217,22 @@ struct ChapterListView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(renameErrorMessage ?? "")
+        }
+        // An alert (not a confirmation dialog) so it's centered instead of a popover anchored to the toolbar.
+        .alert(
+            "Delete \(selectedChapterIDs.count) \(selectedChapterIDs.count == 1 ? "chapter" : "chapters")?",
+            isPresented: $showDeleteSelectedConfirmation
+        ) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteSelectedChapters() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(selectedChapterNamesSummary(in: chapters))\n\nThe chapter files will be removed from the series folder.")
+        }
+        .onChange(of: showEnglish) { _, _ in
+            // Selection only covers the chapters of the language being shown.
+            selectedChapterIDs.removeAll()
         }
         .onChange(of: selectedPhotoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
@@ -602,10 +627,23 @@ struct ChapterListView: View {
 
     private var chaptersHeader: some View {
         HStack(spacing: 12) {
-            Label("Chapters", systemImage: "list.bullet")
-                .font(.headline)
-                .foregroundColor(.white)
-                .fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 8) {
+                Button(action: toggleChapterSelection) {
+                    Image(systemName: isSelectingChapters ? "checkmark.circle.fill" : "list.bullet")
+                        .font(.headline)
+                        .foregroundColor(isSelectingChapters ? theme.accent : .white)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(minWidth: 28, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .disabled(isSyncing)
+                .accessibilityLabel(isSelectingChapters ? "Done Selecting" : "Select Chapters")
+
+                Text("Chapters")
+                    .font(.headline)
+                    .foregroundColor(.white)
+            }
+            .fixedSize(horizontal: true, vertical: false)
             HStack(spacing: 0) {
                 languageButton("VN", english: false)
                 languageButton("EN", english: true)
@@ -656,6 +694,161 @@ struct ChapterListView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+    // MARK: - Chapter Selection
+
+    private func toggleChapterSelection() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isSelectingChapters.toggle()
+            selectedChapterIDs.removeAll()
+        }
+        if isSelectingChapters { cancelRename() }
+    }
+
+    private func toggleSelection(of chapter: Chapter) {
+        if selectedChapterIDs.contains(chapter.id) {
+            selectedChapterIDs.remove(chapter.id)
+        } else {
+            selectedChapterIDs.insert(chapter.id)
+        }
+    }
+
+    private func selectionBar(chapters: [Chapter]) -> some View {
+        let allSelected = !chapters.isEmpty && chapters.allSatisfy { selectedChapterIDs.contains($0.id) }
+        let numbers = selectedChapterNumbers(in: chapters)
+        let canDelete = !selectedChapterIDs.isEmpty && !isSyncing
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 12) {
+                // The header toggle may be scrolled away, so the bar can exit selection itself.
+                Button(action: toggleChapterSelection) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.secondaryText)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Done Selecting")
+
+                Text(numbers.isEmpty ? "Select chapters" : "\(numbers.count) selected")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.secondaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button(allSelected ? "Deselect All" : "Select All") {
+                    selectedChapterIDs = allSelected ? [] : Set(chapters.map(\.id))
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(theme.accent)
+                .disabled(chapters.isEmpty)
+                .padding(.trailing, 8)
+
+                Button(role: .destructive) {
+                    showDeleteSelectedConfirmation = true
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(canDelete ? .white : .tertiaryText)
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .background(
+                            canDelete ? Color.red : Color.white.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .disabled(!canDelete)
+                .accessibilityLabel("Delete Selected Chapters")
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .bottomLeading) {
+            // Drawn below the bar, in the home indicator area its background already covers,
+            // so showing or hiding it never changes the bar's height.
+            if !numbers.isEmpty {
+                Text("#\(Self.rangeSummary(numbers))")
+                    .font(.caption)
+                    .foregroundColor(theme.accent)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Bar leading padding (12) + close button (36) + row spacing (12): lines up with "N selected".
+                    .padding(.leading, 60)
+                    .padding(.trailing, 16)
+                    .alignmentGuide(.bottom) { $0[.top] }
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: numbers.isEmpty)
+        // Full-width bar like the navigation bar: same background, extended under the home indicator.
+        .background(theme.libraryBackground, ignoresSafeAreaEdges: .bottom)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+        }
+    }
+
+    /// 1-based list numbers (oldest first, matching the row numbers) of the selected chapters.
+    private func selectedChapterNumbers(in chapters: [Chapter]) -> [Int] {
+        chapters.enumerated().compactMap { index, chapter in
+            selectedChapterIDs.contains(chapter.id) ? index + 1 : nil
+        }
+    }
+
+    /// Collapses sorted numbers into ranges, e.g. [1, 2, 3, 7] → "1–3, 7".
+    private static func rangeSummary(_ numbers: [Int]) -> String {
+        var parts: [String] = []
+        var start = numbers.first
+        var previous = numbers.first
+        for number in numbers.dropFirst() + [Int.min] {
+            guard let first = start, let last = previous else { break }
+            if number == last + 1 {
+                previous = number
+                continue
+            }
+            parts.append(first == last ? "\(first)" : "\(first)–\(last)")
+            start = number
+            previous = number
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Selected chapter names for the delete confirmation, capped so the dialog stays short.
+    private func selectedChapterNamesSummary(in chapters: [Chapter]) -> String {
+        let names = chapters.filter { selectedChapterIDs.contains($0.id) }.map(\.displayName)
+        let limit = 8
+        var lines = names.prefix(limit).map { "• \($0)" }
+        if names.count > limit {
+            lines.append("…and \(names.count - limit) more")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func deleteSelectedChapters() async {
+        let chapters = (book.chapters ?? []).filter {
+            $0.isEnglish == showEnglish && selectedChapterIDs.contains($0.id)
+        }
+        guard !chapters.isEmpty else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            try await ImportService().deleteChapters(chapters, from: book, modelContext: modelContext)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            deleteErrorMessage = error.localizedDescription
+        }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selectedChapterIDs.removeAll()
+            isSelectingChapters = false
+        }
+    }
+
     // MARK: - Chapter List
 
     private func chapterList(chapters allChapters: [Chapter], hasProgress: Bool) -> some View {
@@ -675,7 +868,15 @@ struct ChapterListView: View {
                 let number = sortAscending ? displayIndex + 1 : allChapters.count - displayIndex
                 let bookmark = bookmarks[originalIndex]
                 VStack(spacing: 0) {
-                    if renamingChapterID == chapter.id {
+                    if isSelectingChapters {
+                        let isSelected = selectedChapterIDs.contains(chapter.id)
+                        Button {
+                            toggleSelection(of: chapter)
+                        } label: {
+                            chapterRow(chapter: chapter, number: number, isCurrentChapter: hasProgress && originalIndex == book.currentChapterIndex, userBookmark: bookmark, selection: isSelected)
+                        }
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    } else if renamingChapterID == chapter.id {
                         chapterRenameRow(chapter: chapter, number: number)
                     } else {
                         Button {
@@ -1128,7 +1329,8 @@ struct ChapterListView: View {
         return "jpg"
     }
 
-    private func chapterRow(chapter: Chapter, number: Int, isCurrentChapter: Bool, userBookmark: Bookmark?) -> some View {
+    /// `selection` is `nil` outside selection mode; otherwise whether the row is selected.
+    private func chapterRow(chapter: Chapter, number: Int, isCurrentChapter: Bool, userBookmark: Bookmark?, selection: Bool? = nil) -> some View {
         return HStack(spacing: 14) {
             Text("\(number)")
                 .font(.subheadline)
@@ -1167,14 +1369,34 @@ struct ChapterListView: View {
 
             chapterFileDetails(chapter)
 
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .foregroundColor(.tertiaryText)
+            // One fixed slot for both accessories, so rows keep the same height in either mode.
+            Group {
+                if let isSelected = selection {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22))
+                        .foregroundColor(isSelected ? theme.accent : .tertiaryText)
+                        .contentTransition(.symbolEffect(.replace))
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.tertiaryText)
+                }
+            }
+            .frame(width: 28, height: 28)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(isCurrentChapter ? theme.accent.opacity(0.08) : Color.clear)
+        .background(selection == true ? theme.accent.opacity(0.18) : (isCurrentChapter ? theme.accent.opacity(0.08) : Color.clear))
+        .overlay(alignment: .leading) {
+            // Accent edge so selected rows stand out while scrolling.
+            if selection == true {
+                Rectangle()
+                    .fill(theme.accent)
+                    .frame(width: 3)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     /// Right-aligned size and creation date, each shown only when enabled in Settings.
