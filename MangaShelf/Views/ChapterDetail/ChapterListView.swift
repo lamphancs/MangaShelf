@@ -41,6 +41,11 @@ struct ChapterListView: View {
     @State private var renameText = ""
     @State private var renameErrorMessage: String?
     @FocusState private var isRenameFieldFocused: Bool
+    @AppStorage(StorageKey.chapterRowShowSize) private var showChapterSize = false
+    @AppStorage(StorageKey.chapterRowShowDate) private var showChapterDate = false
+    @AppStorage(StorageKey.chapterRowDateStyle) private var chapterDateStyle: ChapterDateStyle = .absolute
+    /// File size and creation date per chapter filename, read only while a row detail is enabled.
+    @State private var chapterFileInfo: [String: ChapterFileInfo] = [:]
 
     init(book: Book) {
         self.book = book
@@ -56,6 +61,21 @@ struct ChapterListView: View {
         let id = UUID()
         let url: URL
         var isEnglish = false
+    }
+
+    private struct ChapterFileInfo: Sendable {
+        let size: Int64?
+        let creationDate: Date?
+    }
+
+    /// Changes whenever row details are toggled or chapter files are added, removed or renamed.
+    private var chapterFileInfoTaskID: Int {
+        var hasher = Hasher()
+        hasher.combine(showChapterSize || showChapterDate)
+        for filename in (book.chapters ?? []).map(\.filename).sorted() {
+            hasher.combine(filename)
+        }
+        return hasher.finalize()
     }
 
     var body: some View {
@@ -106,6 +126,9 @@ struct ChapterListView: View {
             await BookDataService.shared.restoreIfNeeded(book: book, modelContext: modelContext)
             await BookDataService.shared.save(book: book)
             await loadArtImages()
+        }
+        .task(id: chapterFileInfoTaskID) {
+            await loadChapterFileInfo()
         }
         .sheet(isPresented: $showAddBookmark) {
             addBookmarkSheet
@@ -740,6 +763,29 @@ struct ChapterListView: View {
         }
     }
 
+    private func loadChapterFileInfo() async {
+        guard showChapterSize || showChapterDate, let folderName = book.folderName,
+              let bookmarkData = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (rootURL, _) = try? LocalFileService.shared.resolveBookmark(bookmarkData) else { return }
+        let seriesFolder = rootURL.appendingPathComponent(folderName)
+        let filenames = (book.chapters ?? []).map(\.filename)
+
+        let loaded = await Task.detached(priority: .utility) { () -> [String: ChapterFileInfo] in
+            guard rootURL.startAccessingSecurityScopedResource() else { return [:] }
+            defer { rootURL.stopAccessingSecurityScopedResource() }
+            var info: [String: ChapterFileInfo] = [:]
+            for filename in filenames {
+                let values = try? seriesFolder.appendingPathComponent(filename)
+                    .resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+                info[filename] = ChapterFileInfo(size: values?.fileSize.map(Int64.init),
+                                                 creationDate: values?.creationDate)
+            }
+            return info
+        }.value
+        guard !Task.isCancelled else { return }
+        chapterFileInfo = loaded
+    }
+
     // MARK: - Inline Rename
 
     /// The chapter's filename without its folder prefix (e.g. "EN/") or ".pdf" extension.
@@ -1105,7 +1151,7 @@ struct ChapterListView: View {
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if let bm = userBookmark {
                 Image(systemName: "bookmark.fill")
@@ -1119,6 +1165,8 @@ struct ChapterListView: View {
                     .foregroundColor(theme.accent)
             }
 
+            chapterFileDetails(chapter)
+
             Image(systemName: "chevron.right")
                 .font(.caption2)
                 .fontWeight(.semibold)
@@ -1127,6 +1175,31 @@ struct ChapterListView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .background(isCurrentChapter ? theme.accent.opacity(0.08) : Color.clear)
+    }
+
+    /// Right-aligned size and creation date, each shown only when enabled in Settings.
+    @ViewBuilder
+    private func chapterFileDetails(_ chapter: Chapter) -> some View {
+        let info = chapterFileInfo[chapter.filename]
+        let size = showChapterSize ? info?.size.map { $0.formatted(.byteCount(style: .file)) } : nil
+        let date = showChapterDate ? info?.creationDate.map(chapterDateStyle.format) : nil
+        if size != nil || date != nil {
+            VStack(alignment: .trailing, spacing: 2) {
+                if let size {
+                    Text(size)
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(.secondaryText)
+                }
+                if let date {
+                    Text(date)
+                        .font(.caption2)
+                        .foregroundColor(.tertiaryText)
+                }
+            }
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
+        }
     }
 
     private func saveBookData() {

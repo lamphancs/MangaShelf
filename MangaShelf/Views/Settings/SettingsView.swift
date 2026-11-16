@@ -20,6 +20,9 @@ struct SettingsView: View {
     @AppStorage(StorageKey.captureCropTrimPages) private var captureCropTrimPages = CaptureCrop.defaultTrimPages
     @AppStorage(StorageKey.captureOverviewZoom) private var captureOverviewZoom = CaptureCrop.defaultOverviewZoom
     @AppStorage(StorageKey.captureDetailZoom) private var captureDetailZoom = CaptureCrop.defaultDetailZoom
+    @AppStorage(StorageKey.chapterRowShowSize) private var showChapterSize = false
+    @AppStorage(StorageKey.chapterRowShowDate) private var showChapterDate = false
+    @AppStorage(StorageKey.chapterRowDateStyle) private var chapterDateStyle: ChapterDateStyle = .absolute
 
     @State private var rootFolderName: String?
     @State private var isScanning = false
@@ -44,6 +47,7 @@ struct SettingsView: View {
                     themeSection
                     accentSection
                     readerSection
+                    chapterRowSection
                     captureSection
                     if isSecretMode {
                         secretLibrarySection
@@ -216,6 +220,66 @@ struct SettingsView: View {
                 .foregroundColor(.secondaryText)
                 .padding(.horizontal, 4)
         }
+    }
+
+    // MARK: - Chapter Row Section
+
+    private var chapterRowSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CHAPTER ROW DETAILS")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                chapterDetailToggle(title: "File Size", symbol: "internaldrive", isOn: $showChapterSize)
+                Divider().background(Color.white.opacity(0.06))
+                chapterDetailToggle(title: "Date Added", symbol: "calendar", isOn: $showChapterDate)
+                Divider().background(Color.white.opacity(0.06))
+                HStack(spacing: 12) {
+                    Image(systemName: "clock")
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 24)
+                    Text("Date Style")
+                        .foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    Picker("Date Style", selection: $chapterDateStyle) {
+                        ForEach(ChapterDateStyle.allCases) { style in
+                            Text(style.format(.now.addingTimeInterval(-2 * 86_400))).tag(style)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(theme.accent)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .disabled(!showChapterDate)
+                .opacity(showChapterDate ? 1 : 0.4)
+            }
+            .font(.subheadline)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text("Extra information shown on the right of each chapter in a series.")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private func chapterDetailToggle(title: String, symbol: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 24)
+                Text(title)
+                    .foregroundStyle(.white)
+            }
+        }
+        .tint(theme.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Capture Section

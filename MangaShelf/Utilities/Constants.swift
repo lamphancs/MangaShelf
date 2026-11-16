@@ -27,6 +27,24 @@ enum StorageKey {
     static let captureCropTopTrimPages = "captureCropTopTrimPages"
     static let captureOverviewZoom = "captureOverviewZoom"
     static let captureDetailZoom = "captureDetailZoom"
+    static let chapterRowShowSize = "chapterRowShowSize"
+    static let chapterRowShowDate = "chapterRowShowDate"
+    static let chapterRowDateStyle = "chapterRowDateStyle"
+}
+
+/// How the file creation date is written in a series' chapter rows.
+enum ChapterDateStyle: String, CaseIterable, Identifiable {
+    case absolute
+    case relative
+
+    var id: String { rawValue }
+
+    func format(_ date: Date) -> String {
+        switch self {
+        case .absolute: date.formatted(date: .abbreviated, time: .omitted)
+        case .relative: date.formatted(.relative(presentation: .named))
+        }
+    }
 }
 
 nonisolated enum CaptureCrop {
