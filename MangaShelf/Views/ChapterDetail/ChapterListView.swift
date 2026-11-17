@@ -591,24 +591,28 @@ struct ChapterListView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
-            .contextMenu {
-                if let url {
-                    if !kind.isLatestChapter {
-                        Button {
-                            downloadURL = CaptureLink(url: url, isEnglish: kind.isEnglish)
-                        } label: {
-                            Label("Tải truyện từ website", systemImage: "arrow.down.doc")
-                        }
-                    }
-                    Button {
-                        UIPasteboard.general.string = url.absoluteString
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    } label: {
-                        Label("Copy Link", systemImage: "doc.on.doc")
-                    }
-                }
-            }
             Spacer(minLength: 8)
+            if let url {
+                if !kind.isLatestChapter {
+                    Button {
+                        downloadURL = CaptureLink(url: url, isEnglish: kind.isEnglish)
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(theme.accent)
+                    }
+                    .accessibilityLabel("Tải truyện từ website")
+                }
+                Button {
+                    UIPasteboard.general.string = url.absoluteString
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } label: {
+                    Image(systemName: "doc.on.doc.fill")
+                        .font(.system(size: 17))
+                        .foregroundColor(theme.accent)
+                }
+                .accessibilityLabel("Copy Link")
+            }
             Button { editingLink = kind } label: {
                 Image(systemName: "pencil.circle.fill")
                     .font(.system(size: 20))

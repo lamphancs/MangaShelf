@@ -14,11 +14,26 @@ final class WebsiteDownloadModel {
     var saved: [String: URL] = [:]
     var status = ""
     var warning = ""
+    var isVerifying = false
+    var libraryChecked = false
     var busy = false
     var completed = 0
     var total = 0
+    var succeeded = 0
+    var failed = 0
+    /// A paused batch keeps its unfinished chapters (starting with the interrupted one) for resume.
+    var isPaused = false
+    /// The last batch ran through every chapter; its progress stays visible as a summary.
+    var isFinished: Bool { !busy && !isPaused && total > 0 && completed == total }
+    private var pending: [WebsiteChapter] = []
+    private var pauseRequested = false
+    private var batchWidth = 0.0
     var imageProgress = 0.0
     var timings: [String: String] = [:]
+    /// Byte size of the PDF saved for each chapter during this session.
+    var sizes: [String: Int] = [:]
+    /// The chapter currently being downloaded, so the list can keep it in view.
+    var currentChapterID: String?
     private var task: Task<Void, Never>?
     private var inBackground = false
     private var needsWebExecution = false
@@ -27,8 +42,7 @@ final class WebsiteDownloadModel {
     func sceneChanged(_ phase: ScenePhase) {
         inBackground = phase == .background
         if inBackground && busy && needsWebExecution {
-            status = "Đã dừng: trang cần JavaScript/xác minh; mở lại app để thử tiếp."
-            stop()
+            pause()
         }
     }
     private func endBackgroundLease() {
@@ -42,7 +56,17 @@ final class WebsiteDownloadModel {
         source = url; provider = WebsiteProvider(url: url)
         browser = WebPageCaptureModel(isPrivate: isPrivate)
     }
-    func stop() { task?.cancel(); browser.webView.stopLoading() }
+    /// Cancels everything, including a paused batch.
+    func stop() {
+        pauseRequested = false; isPaused = false; pending = []
+        task?.cancel(); browser.webView.stopLoading()
+    }
+    /// Cancels only the chapter in flight; resume restarts from that chapter.
+    func pause() {
+        guard busy else { return }
+        pauseRequested = true
+        task?.cancel(); browser.webView.stopLoading()
+    }
     private func js(_ script: String, timeout: Duration = .seconds(35)) async throws -> Any {
         try await WebCaptureRequest<Any>().run(timeout: timeout) { finish in
             browser.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
@@ -51,20 +75,26 @@ final class WebsiteDownloadModel {
         }
     }
     private func navigate(_ url: URL) async throws {
+        let previousStatus = status
+        defer { isVerifying = false }
         browser.load(url)
         try await Task.sleep(for: .milliseconds(500))
         let deadline = ContinuousClock.now + .seconds(120)
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
-            if browser.isVerificationRequired { status = "Đang chờ xác minh — hoàn thành trong trang nguồn bên dưới." }
-            else if browser.canCapture && !browser.isLoading { return }
+            isVerifying = browser.isVerificationRequired
+            status = isVerifying ? "Đang xác minh" : previousStatus
+            if !isVerifying && browser.canCapture && !browser.isLoading { return }
             if let error = browser.errorMessage { throw WebsiteDownloadError(error) }
             try await Task.sleep(for: .milliseconds(400))
         }
         throw WebsiteDownloadError("Trang chưa sẵn sàng. Hoàn thành xác minh/đăng nhập rồi thử lại.")
     }
-    func loadList() {
+    func loadList(book: Book, isEnglish: Bool) {
         guard !busy else { return }
+        isPaused = false; pending = []
+        completed = 0; total = 0; succeeded = 0; failed = 0
+        libraryChecked = false
         busy = true
         task = Task {
             defer { busy = false; needsWebExecution = false }
@@ -106,12 +136,58 @@ final class WebsiteDownloadModel {
                 }
                 chapters = provider.chapters(links, series: source)
                 guard !chapters.isEmpty else { throw WebsiteDownloadError("Không tìm thấy chapter đúng bộ truyện. Kiểm tra URL trang chủ, đăng nhập hoặc cấu trúc website.") }
+                try await refreshSavedChapters(book: book, isEnglish: isEnglish)
                 selected.formIntersection(Set(chapters.map(\.id)))
                 warning = (verified ? "Đã đối chiếu đủ phân trang chapter. " : "Chưa xác minh được danh sách đầy đủ. Website có thể phân trang hoặc ẩn chapter. ") + "Ảnh được kiểm tra theo DOM và tổng trang nếu website cung cấp; hãy đối chiếu chapter sau khi tải."
                 status = "Tìm thấy \(chapters.count) chapter"
             } catch { status = Task.isCancelled ? "Đã dừng" : error.localizedDescription }
         }
     }
+    func refreshSavedChapters(book: Book, isEnglish: Bool) async throws {
+        libraryChecked = false
+        guard let folderName = book.folderName,
+              let bookmark = UserDefaults.standard.data(forKey: book.bookmarkKey),
+              let (root, _) = try? LocalFileService.shared.resolveBookmark(bookmark),
+              root.startAccessingSecurityScopedResource() else {
+            throw WebsiteDownloadError("Không truy cập được thư viện để kiểm tra chapter đã tải.")
+        }
+        defer { root.stopAccessingSecurityScopedResource() }
+        let folder = root.appendingPathComponent(folderName)
+        let currentChapters = chapters
+        let matches = try await Task.detached(priority: .utility) {
+            try Self.savedChapters(in: folder, chapters: currentChapters, isEnglish: isEnglish)
+        }.value
+        try Task.checkCancellation()
+        let removed = Set(saved.keys).subtracting(matches.keys)
+        for id in removed { states[id] = nil; timings[id] = nil; sizes[id] = nil }
+        saved = matches
+        libraryChecked = true
+    }
+
+    // Inspect actual files, not cached SwiftData rows or only this session's downloads.
+    nonisolated static func savedChapters(in folder: URL, chapters: [WebsiteChapter], isEnglish: Bool) throws -> [String: URL] {
+        let languageFolder = isEnglish ? folder.appendingPathComponent("EN") : folder
+        let files = try ImportService.chapterFiles(in: folder).filter {
+            $0.deletingLastPathComponent().standardizedFileURL == languageFolder.standardizedFileURL
+                && ((try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0
+        }
+        var byNumber: [Decimal: URL] = [:]
+        for file in files {
+            let stem = file.deletingPathExtension().lastPathComponent.precomposedStringWithCanonicalMapping
+            // A collision suffix such as "(2)" is not the chapter number.
+            let number = WebsiteProvider.number(stem) ?? (
+                stem.range(of: #"^\d+(?:[.,]\d+)?$"#, options: .regularExpression) != nil
+                    ? Decimal(string: stem.replacingOccurrences(of: ",", with: "."), locale: Locale(identifier: "en_US_POSIX"))
+                    : nil
+            )
+            if let number, byNumber[number] == nil { byNumber[number] = file }
+        }
+        return Dictionary(uniqueKeysWithValues: chapters.compactMap { chapter in
+            guard let number = chapter.number, let file = byNumber[number] else { return nil }
+            return (chapter.id, file)
+        })
+    }
+
     private func omegaList() async throws -> [[String: String]] {
         // Match the exact series slug inside structured objects, never a random series_id.
         let result = try await js(WebsiteProvider.omegaListScript)
@@ -151,7 +227,7 @@ final class WebsiteDownloadModel {
             // Verification, encrypted client-side content or changed HTML falls back
             // to the user's real browsing session, never an incomplete static PDF.
         }
-        states[chapter.id] = "Website cần JavaScript — đang đọc trang nguồn"
+        states[chapter.id] = "Đang đọc trang nguồn (website cần JavaScript)"
         try await navigate(chapter.url)
         guard let current = browser.webView.url,
               WebsiteProvider.canonical(current) == WebsiteProvider.canonical(chapter.url) else {
@@ -194,8 +270,6 @@ final class WebsiteDownloadModel {
     }
     func download(book: Book, isEnglish: Bool, context: ModelContext) {
         guard !busy else { return }
-        let queue = chapters.filter { selected.contains($0.id) && saved[$0.id] == nil }
-        guard !queue.isEmpty else { return }
         // Freeze the full-width browser viewport for this batch: rotations and
         // chapter length must not change the output width halfway through a queue.
         let pdfWidth = Double(browser.webView.bounds.width)
@@ -203,24 +277,54 @@ final class WebsiteDownloadModel {
             status = "Khung trình duyệt chưa sẵn sàng. Vui lòng thử lại."
             return
         }
-        busy = true; completed = 0; total = queue.count
+        batchWidth = pdfWidth
+        isPaused = false; pending = []
+        completed = 0; total = 0; succeeded = 0; failed = 0
+        run(book: book, isEnglish: isEnglish, context: context, queue: nil)
+    }
+    func resume(book: Book, isEnglish: Bool, context: ModelContext) {
+        guard !busy, isPaused else { return }
+        // Chapters deselected while paused are dropped from the remaining queue.
+        let queue = pending.filter { selected.contains($0.id) }
+        run(book: book, isEnglish: isEnglish, context: context, queue: queue)
+    }
+    private func run(book: Book, isEnglish: Bool, context: ModelContext, queue resumed: [WebsiteChapter]?) {
+        let pdfWidth = batchWidth
+        busy = true; isPaused = false; pauseRequested = false; pending = []
         backgroundLease = UIApplication.shared.beginBackgroundTask(withName: "Finish website chapter") { [weak self] in
-            Task { @MainActor in self?.stop(); self?.endBackgroundLease() }
+            Task { @MainActor in self?.pause(); self?.endBackgroundLease() }
         }
         task = Task {
-            defer { busy = false; needsWebExecution = false; endBackgroundLease() }
-            for chapter in queue {
-                if Task.isCancelled || inBackground { break }
+            defer { busy = false; needsWebExecution = false; currentChapterID = nil; endBackgroundLease() }
+            let queue: [WebsiteChapter]
+            if let resumed {
+                queue = resumed
+            } else {
+                do {
+                    try await refreshSavedChapters(book: book, isEnglish: isEnglish)
+                } catch {
+                    status = error.localizedDescription
+                    return
+                }
+                // Already-saved chapters stay downloadable; a re-download is saved as a new "(2)" file.
+                queue = chapters.filter { selected.contains($0.id) }
+            }
+            total = completed + queue.count
+            guard !queue.isEmpty else { return }
+            for (index, chapter) in queue.enumerated() {
+                if Task.isCancelled || inBackground { pending = Array(queue[index...]); break }
                 let folder = FileManager.default.temporaryDirectory.appendingPathComponent("website-\(UUID())", isDirectory: true)
                 defer { try? FileManager.default.removeItem(at: folder) }
                 let started = ContinuousClock.now
+                currentChapterID = chapter.id
                 do {
                     needsWebExecution = true
                     guard let filename = chapter.filename else { throw WebsiteDownloadError("Không xác định được số chapter; không tự gán số thứ tự.") }
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     let capacity = try folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
                     if let capacity, capacity < 600 * 1024 * 1024 { throw WebsiteDownloadError("Cần ít nhất 600 MB dung lượng trống để tạo PDF an toàn.") }
-                    states[chapter.id] = "Đang tải ảnh"; status = chapter.title; imageProgress = 0
+                    sizes[chapter.id] = nil
+                    states[chapter.id] = "Đang tải ảnh"; status = "Đang tải \(chapter.title)"; imageProgress = 0
                     let cookies = await browser.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
                     let config = URLSessionConfiguration.ephemeral
                     config.timeoutIntervalForRequest = 40; config.timeoutIntervalForResource = 120
@@ -284,19 +388,33 @@ final class WebsiteDownloadModel {
                     states[chapter.id] = "Đang lưu"
                     let data = try Data(contentsOf: pdf, options: .mappedIfSafe)
                     let result = try await ImportService().saveCapturedChapter(data, for: book, filename: filename, sourceURL: chapter.url, chapterTitle: chapter.title, isEnglish: isEnglish, modelContext: context)
-                    saved[chapter.id] = result; selected.remove(chapter.id)
+                    saved[chapter.id] = result; sizes[chapter.id] = data.count; selected.remove(chapter.id)
                     func seconds(_ from: ContinuousClock.Instant, _ to: ContinuousClock.Instant) -> String {
                         let c = from.duration(to: to).components
                         return String(format: "%.1f", Double(c.seconds) + Double(c.attoseconds) / 1e18)
                     }
                     states[chapter.id] = "Hoàn tất · \(seconds(started, .now)) giây"
+                    succeeded += 1
                     timings[chapter.id] = "URL \(seconds(started, resolvedAt))s · Tải ảnh \(seconds(resolvedAt, downloadedAt))s · PDF \(seconds(downloadedAt, writtenAt))s · Lưu \(seconds(writtenAt, .now))s"
                 } catch {
-                    states[chapter.id] = Task.isCancelled ? "Đã dừng" : "Lỗi: \(error.localizedDescription)"
+                    if Task.isCancelled || inBackground {
+                        // The interrupted chapter is discarded and restarts first on resume.
+                        pending = Array(queue[index...])
+                        states[chapter.id] = pauseRequested || inBackground ? "Đã tạm dừng" : "Đã dừng"
+                        break
+                    }
+                    states[chapter.id] = "Lỗi: \(error.localizedDescription)"
+                    failed += 1
                 }
                 completed += 1
             }
-            status = Task.isCancelled || inBackground ? "Đã dừng — PDF đã lưu được giữ lại; mở app để tải tiếp phần còn chọn" : "Đã xử lý \(completed)/\(total) chapter"
+            if !pending.isEmpty && (pauseRequested || inBackground) {
+                isPaused = true
+                status = "Đã tạm dừng · còn \(pending.count) chapter"
+            } else {
+                pending = []
+                status = Task.isCancelled ? "Đã dừng" : "Đã xử lý \(completed)/\(total) chapter"
+            }
         }
     }
     // Blob/data bytes remain in their owning page. Only one 64 KiB chunk crosses

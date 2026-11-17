@@ -204,6 +204,29 @@ import UniformTypeIdentifiers
         let second = try await service.saveCapturedChapter(data,for:book,filename:"Chapter 12.5.pdf",seriesFolderURL:folder,isEnglish:true,modelContext:container.mainContext)
         try check(first != second && first.deletingLastPathComponent().lastPathComponent == "EN" && book.sortedChapters.count == 2, "Import language and no overwrite")
         try check(PDFDocument(url:first)?.pageCount == 1, "PDFKit opens generated PDF")
+        let localChapters = ["12.5", "2", "3", "4", "5", "6"].map { number in
+            WebsiteChapter(title: "Chapter " + number,
+                           url: URL(string: "https://toongod.org/webtoon/fixture/chapter-" + number)!,
+                           number: Decimal(string: number), volume: nil)
+        }
+        let vnFile = folder.appendingPathComponent("Chương 002.pdf")
+        try data.write(to: vnFile)
+        try data.write(to: folder.appendingPathComponent("003.pdf"))
+        try Data().write(to: folder.appendingPathComponent("Chapter 4.pdf"))
+        try data.write(to: folder.appendingPathComponent("Volume 5.pdf"))
+        try data.write(to: folder.appendingPathComponent("Chapter 6 (2).pdf"))
+        let enMatches = try WebsiteDownloadModel.savedChapters(in: folder, chapters: localChapters, isEnglish: true)
+        let vnMatches = try WebsiteDownloadModel.savedChapters(in: folder, chapters: localChapters, isEnglish: false)
+        try check(enMatches.count == 1 && enMatches[localChapters[0].id] != nil, "EN decimal and duplicate suffix recognition")
+        try check(vnMatches.count == 3 && vnMatches[localChapters[1].id]?.lastPathComponent.precomposedStringWithCanonicalMapping == vnFile.lastPathComponent.precomposedStringWithCanonicalMapping
+                  && vnMatches[localChapters[2].id] != nil && vnMatches[localChapters[5].id] != nil,
+                  "VN language isolation, padded/localized/numeric chapter names; empty and unrelated PDFs excluded: \(vnMatches.mapValues { $0.lastPathComponent })")
+        try FileManager.default.removeItem(at: vnFile)
+        let afterDeletion = try WebsiteDownloadModel.savedChapters(in: folder, chapters: localChapters, isEnglish: false)
+        try check(afterDeletion[localChapters[1].id] == nil, "Deleted PDF must become downloadable despite cached metadata")
+        try FileManager.default.removeItem(at: first)
+        let remainingCopy = try WebsiteDownloadModel.savedChapters(in: folder, chapters: localChapters, isEnglish: true)
+        try check(remainingCopy[localChapters[0].id] == second, "Remaining collision-suffixed PDF still marks the decimal chapter downloaded")
         return "PASS: chapter scope/dedup/order/numbers (4 providers), dynamic DOM/lazy/picture/ads, one-page geometry, JPEG byte identity, PNG lossless, seam pixels, EN import, no overwrite, PDFKit open, Omega pagination/incomplete response, HTTP403/Referer/no retry, cancellation, blob/data chunk transfer, ICC, EXIF rejection, fixed-width long pages and reader width fitting; inert HTML/no navigation, 3-way download ordering, cancellation and size cap." + benchmark
     }
 }
