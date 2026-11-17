@@ -6,6 +6,10 @@ nonisolated struct WebsiteChapter: Identifiable, Sendable {
     let url: URL
     let number: Decimal?
     let volume: String?
+    /// Release date as shown on the website's chapter row (absolute or relative text).
+    var date: String? = nil
+    /// The website marks this chapter as new.
+    var isNew = false
     var filename: String? { number.map { "Chapter \(NSDecimalNumber(decimal: $0).stringValue).pdf" } }
 }
 
@@ -39,6 +43,13 @@ nonisolated enum WebsiteProvider: String, CaseIterable, Sendable {
               let digits = text[range].range(of: #"\d+"#, options: .regularExpression) else { return nil }
         return String(text[digits])
     }
+    /// API timestamps (ISO 8601) become a short local date; website text is kept as shown.
+    static func displayDate(_ text: String) -> String {
+        for style in [Date.ISO8601FormatStyle(includingFractionalSeconds: true), Date.ISO8601FormatStyle()] {
+            if let date = try? style.parse(text) { return date.formatted(date: .abbreviated, time: .omitted) }
+        }
+        return text
+    }
     func chapters(_ links: [[String: String]], series: URL) -> [WebsiteChapter] {
         let base = Self.canonical(series)
         var seen = Set<URL>()
@@ -56,7 +67,8 @@ nonisolated enum WebsiteProvider: String, CaseIterable, Sendable {
             }
             guard matches, seen.insert(url).inserted else { return nil }
             let title = link["title"] ?? url.lastPathComponent
-            return WebsiteChapter(title: title, url: url, number: Self.number(title) ?? Self.number(url.lastPathComponent), volume: link["volume"] ?? Self.volume(title))
+            return WebsiteChapter(title: title, url: url, number: Self.number(title) ?? Self.number(url.lastPathComponent), volume: link["volume"] ?? Self.volume(title),
+                                  date: link["date"].flatMap { $0.isEmpty ? nil : Self.displayDate($0) }, isNew: link["new"] == "1")
         }.sorted {
             if let a = $0.number, let b = $1.number, a != b { return a < b }
             return $0.title.localizedStandardCompare($1.title) == .orderedAscending
@@ -112,7 +124,9 @@ nonisolated enum WebsiteProvider: String, CaseIterable, Sendable {
           if(Number(j.meta.total)!==expected) throw new Error('Danh sách thay đổi trong lúc tải');
           for(const c of j.data) {
             if(c.series?.series_slug!==slug || String(c.series.id)!==String(id)) throw new Error('Sai bộ truyện');
-            links.push({url:location.origin+'/series/'+slug+'/'+c.chapter_slug,title:(c.chapter_name || '')+' '+(c.chapter_title || '')});
+            const link={url:location.origin+'/series/'+slug+'/'+c.chapter_slug,title:(c.chapter_name || '')+' '+(c.chapter_title || '')};
+            if(typeof c.created_at==='string') link.date=c.created_at;
+            links.push(link);
           }
           if(page===Number(j.meta.last_page)) {
             if(links.length!==expected || new Set(links.map(c=>c.url)).size!==expected) throw new Error('Danh sách chưa đủ');
@@ -122,8 +136,33 @@ nonisolated enum WebsiteProvider: String, CaseIterable, Sendable {
         throw new Error('Quá nhiều trang');
         """#
 
+    /// Defines `chapterLink(a, url)`: the link plus the date and "new" badge shown on its chapter row.
+    /// Every value is a string so the result bridges to `[[String: String]]`.
+    static let chapterLinkFunction = #"""
+        function chapterLink(a, url = a.href) {
+          const link = {url, title: a.textContent.trim()};
+          let row = a.closest('li, tr, .works-chapter-item, .wp-manga-chapter') || a.parentElement;
+          // A container holding several chapters is a list, not this chapter's row.
+          if (!row || row.querySelectorAll('a[href]').length > 3) row = a;
+          const dateRE = /^(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\d{4}-\d{2}-\d{2}|[a-z]{3,9}\.? \d{1,2},? \d{4}|\d{1,2} [a-z]{3,9},? \d{4}|(?:\d+|an?|một) ?(?:giây|phút|giờ|ngày|tuần|tháng|năm|sec|second|min|minute|hour|day|week|month|year)s? ?(?:trước|ago))$/i;
+          const leaves = [...row.querySelectorAll('*')].filter(e => !e.children.length).map(e => [e, e.textContent.trim()]);
+          const dateNode = row.querySelector('.chapter-release-date, .time-chap, time');
+          const newTag = row.querySelector('.c-new-tag, [class~="new"], [class*="new-tag"], [class*="badge-new"], [class*="chapter-new"], img[src*="new" i]');
+          const date = dateNode?.textContent.trim() || newTag?.getAttribute('title')?.trim()
+            || dateNode?.getAttribute('datetime') || leaves.find(([, t]) => dateRE.test(t))?.[1];
+          if (date) link.date = date;
+          const newLeaf = leaves.find(([, t]) => /^(?:new|mới)!?$/i.test(t));
+          if (newTag || newLeaf) link.new = '1';
+          // When the whole row is the link, keep the date/badge out of the chapter title.
+          for (const extra of [date, newLeaf?.[1]]) {
+            if (extra && row === a && link.title !== extra) link.title = link.title.replace(extra, '').trim();
+          }
+          return link;
+        }
+        """#
+
     var linksScript: String {
-        "Array.from(document.querySelectorAll('\(linkSelector)'), a => ({url:a.href,title:a.textContent.trim()}))"
+        "(() => { \(Self.chapterLinkFunction) return Array.from(document.querySelectorAll('\(linkSelector)'), a => chapterLink(a)); })()"
     }
     /// Parse inert HTML: no navigation, subresource loading, script execution or scrolling.
     func staticImagesScript(html: String, url: URL) throws -> String {

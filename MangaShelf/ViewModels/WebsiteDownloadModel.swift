@@ -116,7 +116,7 @@ final class WebsiteDownloadModel {
                 var verified = false
                 if provider == .toonGod {
                     // Same-origin requests use the actual WebKit session; never invent clearance tokens.
-                    let extra = try await js(#"""
+                    let extra = try await js(WebsiteProvider.chapterLinkFunction + #"""
                     const base = location.href.split(/[?#]/)[0].replace(/\/$/,'');
                     let html = '';
                     try { const r = await fetch(base + '/ajax/chapters/', {method:'POST'}); if(r.ok) html = await r.text(); } catch {}
@@ -126,7 +126,7 @@ final class WebsiteDownloadModel {
                       if(r.ok) html = await r.text();
                     }
                     const doc = new DOMParser().parseFromString(html,'text/html');
-                    return [...doc.querySelectorAll('a[href]')].map(a=>({url:new URL(a.getAttribute('href'),location.href).href,title:a.textContent.trim()}));
+                    return [...doc.querySelectorAll('a[href]')].map(a=>chapterLink(a, new URL(a.getAttribute('href'),location.href).href));
                     """#) as? [[String: String]] ?? []
                     links += extra
                     // An AJAX response alone is not proof of a complete list.

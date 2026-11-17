@@ -66,6 +66,11 @@ struct ChapterListView: View {
         var isEnglish = false
     }
 
+    private enum ScrollTarget: Hashable {
+        case infoBox
+        case chaptersHeader
+    }
+
     private struct ChapterFileInfo: Sendable {
         let size: Int64?
         let creationDate: Date?
@@ -85,39 +90,56 @@ struct ChapterListView: View {
         let sorted = book.sortedChapters
         let chapters = sorted.filter { $0.isEnglish == showEnglish }
         let progress = book.seriesProgress(in: sorted)
-        return ScrollView {
-            VStack(spacing: 0) {
-                coverHeader
-                infoSection(count: chapters.count, progress: progress)
-                    .padding(.top, 20)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    coverHeader
+                    infoSection(count: chapters.count, progress: progress)
+                        .padding(.top, 20)
 
-                if showInfoBox {
-                    seriesInfoBox
-                        .padding(.top, 14)
+                    if showInfoBox {
+                        seriesInfoBox
+                            .padding(.top, 14)
+                            .padding(.horizontal, 20)
+                            .transition(.opacity)
+                            .id(ScrollTarget.infoBox)
+                    }
+
+                    actionButtons(chapters: chapters, progress: progress)
+                        .padding(.top, 16)
                         .padding(.horizontal, 20)
-                        .transition(.opacity)
+
+                    chaptersHeader
+                        .padding(.top, 24)
+                        .id(ScrollTarget.chaptersHeader)
+
+                    chapterList(chapters: chapters, hasProgress: progress > 0)
+                        .padding(.top, 16)
+                        .padding(.bottom, 40)
                 }
-
-                actionButtons(chapters: chapters, progress: progress)
-                    .padding(.top, 16)
-                    .padding(.horizontal, 20)
-
-                chaptersHeader
-                    .padding(.top, 24)
-
-                chapterList(chapters: chapters, hasProgress: progress > 0)
-                    .padding(.top, 16)
-                    .padding(.bottom, 40)
+            }
+            .scrollIndicators(.hidden)
+            .safeAreaInset(edge: .bottom) {
+                if isSelectingChapters {
+                    selectionBar(chapters: chapters)
+                        .transition(.move(edge: .bottom))
+                }
+            }
+            .refreshable { await syncChapters() }
+            // Gently bring the newly relevant section into focus when it is opened.
+            .onChange(of: isSelectingChapters) { _, isSelecting in
+                guard isSelecting else { return }
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    proxy.scrollTo(ScrollTarget.chaptersHeader, anchor: .top)
+                }
+            }
+            .onChange(of: showInfoBox) { _, isShowing in
+                guard isShowing else { return }
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    proxy.scrollTo(ScrollTarget.infoBox, anchor: .center)
+                }
             }
         }
-        .scrollIndicators(.hidden)
-        .safeAreaInset(edge: .bottom) {
-            if isSelectingChapters {
-                selectionBar(chapters: chapters)
-                    .transition(.move(edge: .bottom))
-            }
-        }
-        .refreshable { await syncChapters() }
         .background(theme.libraryBackground)
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)

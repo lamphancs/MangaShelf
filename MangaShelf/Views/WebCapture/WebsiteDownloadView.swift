@@ -268,9 +268,20 @@ struct WebsiteDownloadView: View {
                     .font(.title3)
                     .foregroundStyle(isSelected ? theme.accent : Color.secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(chapter.title)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(isSaved && !isSelected ? Color.secondary : Color.primary)
+                    HStack(spacing: 6) {
+                        Text(chapter.title)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(isSaved && !isSelected ? Color.secondary : Color.primary)
+                        if chapter.isNew {
+                            Text("NEW")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.red, in: Capsule())
+                                .accessibilityLabel("Mới")
+                        }
+                    }
                     let state = model.states[chapter.id] ?? (isSaved ? (isSelected ? "Đã tải · sẽ tải lại" : "Đã tải")
                                                              : (model.libraryChecked ? "Chưa tải" : "Chưa kiểm tra thư viện"))
                     progressText(state, suffix: model.sizes[chapter.id].map { " · " + Int64($0).formatted(.byteCount(style: .file)) } ?? "")
@@ -278,6 +289,12 @@ struct WebsiteDownloadView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+                if let date = chapter.date {
+                    Text(date)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
