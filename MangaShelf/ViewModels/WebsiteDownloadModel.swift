@@ -227,7 +227,7 @@ final class WebsiteDownloadModel {
             // Verification, encrypted client-side content or changed HTML falls back
             // to the user's real browsing session, never an incomplete static PDF.
         }
-        states[chapter.id] = "Đang đọc trang nguồn (website cần JavaScript)"
+        states[chapter.id] = "Đang đọc trang nguồn"
         try await navigate(chapter.url)
         guard let current = browser.webView.url,
               WebsiteProvider.canonical(current) == WebsiteProvider.canonical(chapter.url) else {

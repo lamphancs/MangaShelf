@@ -86,13 +86,29 @@ struct BookCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             BookProgressBar(value: progress.largestLanguage)
 
-            Label(
-                progress.label,
-                systemImage: "book.fill"
-            )
+            HStack(spacing: 4) {
+                Label(
+                    progress.label,
+                    systemImage: "book.fill"
+                )
+                Spacer(minLength: 4)
+                fileSizeLabel
+            }
             .font(.caption2)
             .foregroundColor(.tertiaryText)
+            .lineLimit(1)
         }
+    }
+
+    // MARK: - File Size
+
+    /// Uses the size persisted on `Book` during library scans, so no disk I/O happens while scrolling.
+    private var fileSizeLabel: some View {
+        Label(
+            book.fileSize.formatted(.byteCount(style: .file)),
+            systemImage: "internaldrive.fill"
+        )
+        .layoutPriority(1)
     }
 
     // MARK: - Single Book Progress
@@ -101,14 +117,19 @@ struct BookCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             BookProgressBar(value: book.readingProgress)
 
-            Label(
-                book.lastReadPage > 0
-                    ? "Page \(book.lastReadPage + 1) of \(book.totalPages)"
-                    : "\(book.totalPages) pages",
-                systemImage: "book.fill"
-            )
+            HStack(spacing: 4) {
+                Label(
+                    book.lastReadPage > 0
+                        ? "Page \(book.lastReadPage + 1) of \(book.totalPages)"
+                        : "\(book.totalPages) pages",
+                    systemImage: "book.fill"
+                )
+                Spacer(minLength: 4)
+                fileSizeLabel
+            }
             .font(.caption2)
             .foregroundColor(.tertiaryText)
+            .lineLimit(1)
         }
     }
 
