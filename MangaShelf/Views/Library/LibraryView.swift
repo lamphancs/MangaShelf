@@ -25,6 +25,7 @@ struct LibraryView: View {
     @State private var checkID: UUID?
     @State private var onlineChapters: [URL: Double] = [:]
     @State private var checkMessage: String?
+    @State private var updateDownloader = LibraryUpdateDownloader()
     @State private var showSettings = false
     @State private var showAddSeries = false
     @State private var newlyCreatedBook: Book?
@@ -116,15 +117,15 @@ struct LibraryView: View {
                     Button {
                         checkID = UUID()
                     } label: {
-                        if checkID != nil {
+                        if checkID != nil || updateDownloader.isDownloading {
                             ProgressView().controlSize(.small)
                         } else {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
                     .tint(theme.accent)
-                    .disabled(checkID != nil)
-                    .accessibilityLabel("Check for new chapters")
+                    .disabled(checkID != nil || updateDownloader.isDownloading)
+                    .accessibilityLabel(updateDownloader.isDownloading ? "Downloading new chapters" : "Check for new chapters")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -230,6 +231,30 @@ struct LibraryView: View {
                 }
             }
         }
+        // Background downloads keep their web view mounted but invisible: it needs a real
+        // layout width for the PDF, and stays in the window while other screens are pushed.
+        .background {
+            if let browser = updateDownloader.hiddenBrowser {
+                // `CaptureWebView` attaches its web view only once, so each series' browser needs its own identity.
+                CaptureWebView(webView: browser.webView)
+                    .id(browser.id)
+                    .padding(.horizontal, 16)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .overlay {
+            if updateDownloader.showsUpdates {
+                LibraryUpdatesOverlay(downloader: updateDownloader) { ids in
+                    updateDownloader.download(ids, context: modelContext) {
+                        await viewModel.quickRefresh(modelContext: modelContext)
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: updateDownloader.showsUpdates)
         .sheet(item: $verificationBrowser) { browser in
             NavigationStack {
                 CaptureWebView(webView: browser.webView)
@@ -252,6 +277,7 @@ struct LibraryView: View {
             checkMessage = nil
             verificationBrowser = nil
             onlineChapters = [:]
+            updateDownloader.cancel()
         }
         .alert("Chapter Check", isPresented: Binding(get: { checkMessage != nil }, set: { if !$0 { checkMessage = nil } })) {
             Button("OK") { checkMessage = nil }
@@ -262,6 +288,7 @@ struct LibraryView: View {
             await viewModel.quickRefresh(modelContext: modelContext)
         }
         .onChange(of: scenePhase) { _, newPhase in
+            updateDownloader.sceneChanged(newPhase, context: modelContext)
             // Reconcile when the user returns from Files-app edits, etc. Cheap thanks
             // to per-folder signature short-circuiting in `ImportService`.
             if newPhase == .active {
@@ -334,7 +361,7 @@ struct LibraryView: View {
         }
         guard !Task.isCancelled else { return }
         var issues: [String] = []
-        var foundUpdate = false
+        var candidates: [LibraryUpdateDownloader.Candidate] = []
         for book in shelf {
             let links = sources(book)
             guard !links.isEmpty else { continue }
@@ -348,18 +375,26 @@ struct LibraryView: View {
                 if let message = failures[source.page] {
                     issues.append("\(label) — \(message)")
                 } else if let local, let remote = onlineChapters[source.page] {
-                    if remote > local { foundUpdate = true }
+                    if remote > local {
+                        candidates.append(.init(book: book, page: source.page, isEnglish: source.english, localLatest: local))
+                    }
                 } else {
                     issues.append("\(label) — No numbered PDF found. Include the chapter number in a filename.")
                 }
             }
         }
+        // Read the full chapter lists (dates, "new" badges, saved files) of the series with updates.
+        let listIssues = await updateDownloader.collect(candidates, dataStore: dataStore) { verificationBrowser = $0 }
+        guard !Task.isCancelled else { return }
+        issues += listIssues
         checkID = nil
-        if pages.isEmpty {
+        if updateDownloader.showsUpdates {
+            updateDownloader.notes = issues
+        } else if pages.isEmpty {
             checkMessage = "Add a ToonGod series link in Info to check for new chapters."
         } else if !issues.isEmpty {
             checkMessage = issues.joined(separator: "\n\n")
-        } else if !foundUpdate {
+        } else {
             checkMessage = "No new chapters found on the checked sources."
         }
     }

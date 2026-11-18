@@ -52,9 +52,13 @@ final class WebsiteDownloadModel {
         }
     }
 
-    init(url: URL, isPrivate: Bool) {
+    convenience init(url: URL, isPrivate: Bool) {
+        self.init(url: url, dataStore: isPrivate ? .nonPersistent() : .default())
+    }
+    /// Shares a session (e.g. the library check's verification cookies) with this download.
+    init(url: URL, dataStore: WKWebsiteDataStore) {
         source = url; provider = WebsiteProvider(url: url)
-        browser = WebPageCaptureModel(isPrivate: isPrivate)
+        browser = WebPageCaptureModel(dataStore: dataStore)
     }
     /// Cancels everything, including a paused batch.
     func stop() {
